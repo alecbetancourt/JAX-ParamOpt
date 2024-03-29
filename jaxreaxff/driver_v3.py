@@ -8,8 +8,8 @@ Author: Mehmet Cagri Kaymak
 import os, sys
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
 #TODO: Figure out how to eliminate oom issus
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+#os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.profiler
@@ -23,7 +23,7 @@ from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
 from jax_md.reaxff.reaxff_forcefield import ForceField
 from jax_md.reaxff.reaxff_helper import read_force_field
 from jax_md import dataclasses
-from jaxreaxff.optimizerv2 import (calculate_loss,
+from jaxreaxff.optimizer_v2 import (calculate_loss,
                                  calculate_energy_and_charges_w_rest,
                                  add_noise_to_params, random_parameter_search,
                                  train_FF, energy_minimize, update_inter_sizes)
@@ -179,8 +179,8 @@ def main():
     #           --ref_ene ./Datasets/amber/ref_ene.json                                    \
     #           --torsions ./Datasets/amber/torsions.json                                  \
     #           --ff_type amber
-    print("Starting AMBER Optimizer")
-    print("AMBER Optimization without EEM not currently supported")
+    print("[INFO] Starting AMBER Optimizer")
+    print("[WARNING] AMBER Optimization without EEM not currently supported")
     #ff_opt(args.init_FF, args.params, args.geo, args.num_e_minim_steps, args.num_trials, args.num_steps, args.ref_ene, args.torsions)
     #sys.exit(0)
 
@@ -189,7 +189,7 @@ def main():
   from jaxreaxff.structure_amber import load_ff, align_forcefield
   import openmm as omm
   if(args.ff_type == 'ambereem'):
-    print("Starting AMBER Optimization w/ EEM")
+    print("[INFO] Starting AMBER Optimization w/ EEM")
     # TODO: this eventually needs to be rolled into a dataclass and some work will have to be done to create a treemap
     # for vmap compatibility, see: https://stackoverflow.com/questions/73765064/jax-vmap-over-batch-of-dataclasses
     # the aligning done to the list structures may also serve this purpose if there isn't an underlying mechanism that works
@@ -342,7 +342,7 @@ def main():
   # TODO: Fix the JIT behavior of these functions by fixing the underlying vmapping
   force_f = jax.jit(jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
                                             has_aux=True),
-                         in_axes=(0,0,0,None,None,None,None,0)), static_argnames=('ff_type_int'))
+                         in_axes=(0,0,0,None,0,None)), static_argnames=('ff_type_int'))
   # force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
   #                                            has_aux=True),
   #                         in_axes=(0,0,0,None,0,None))
@@ -495,7 +495,9 @@ def main():
       [list_positions, cur_total_energy,
       center_sizes, cur_RMSG_vals] = minim_func(aligned_data,
                                                 center_sizes,
-                                                force_field)
+                                                force_field,
+                                                amberPrms=aligned_amber_ff,
+                                                ff_type_int=ff_type_int)
       minim_end = time.time()
     else:
       # extend the interaction list sizes if needed

@@ -57,6 +57,8 @@ def amber_eem_energy(pos,
   #(k, phase, periodicity, t1_idx, t2_idx, t3_idx, t4_idx, param_index)
   #(pairs, pairs14, atom_type, sigma, epsilon, scnb)
   #(charges, pairs, pairs14, scee)
+  pos = pos/10
+
   bprm = (amberPrms.b_k, amberPrms.b_l, amberPrms.b_1_idx, amberPrms.b_2_idx, amberPrms.b_prm_idx)
   aprm = (amberPrms.a_k, amberPrms.a_eq_ang, amberPrms.a_1_idx, amberPrms.a_2_idx, amberPrms.a_3_idx, amberPrms.a_prm_idx)
   tprm = (amberPrms.t_k, amberPrms.t_phase, amberPrms.t_period, amberPrms.t_1_idx, amberPrms.t_2_idx
@@ -101,14 +103,28 @@ def amber_eem_energy(pos,
   
   original_chgs, pairs, pairs14, scee = cprm
   cprm = (charges, pairs, pairs14, scee)
+  # print(original_chgs)
+  # print("EEM Charges")
+  # print(charges)
+  # print("positions")
+  # print(pos)
+  # print("aprm")
+  # print(aprm)
 
   # call amber function to return required observable
+  #print("energies")
   totalE = 0
   totalE += amber.bond_get_energy(pos, boxVectors, bprm)
+  #print(totalE)
   totalE += amber.angle_get_energy(pos, boxVectors, aprm)
+  #print(totalE)
   totalE += amber.torsion_get_energy(pos, boxVectors, tprm)
+  #print(totalE)
   totalE += amber.lj_get_energy(pos, boxVectors, lprm)
+  #print(totalE)
   totalE += amber.coul_get_energy(pos, boxVectors, cprm)
+  #print(totalE)
+  #sys.exit()
 
   # return energy and charges to preserve modularity with existing reaxff code
   return totalE, charges
@@ -274,10 +290,20 @@ def calculate_energy_and_charges(positions,
                      *dists_and_angles,
                      force_field,
                      init_charges=None,
-                     total_charge=0.0,
-                     backprop_solve=False,
+                     total_charge=structure.total_charge,
+                     backprop_solve=True,
                      tol=1e-06,
-                     max_solver_iter=500)
+                     max_solver_iter=-1)
+
+  # print("Energy fn energies", jnp.shape(energy))
+  # print("Positions",jnp.shape(positions))
+  # print("structure", jnp.shape(structure.atom_types))
+  # print("amberprms", jnp.shape(amberPrms.b_k))
+  # sys.exit()
+  # Energy fn energies ()
+  # Positions (23, 3)
+  # structure (23,)
+  # amberprms (7,)
 
 
   # if ff_type == 'reaxff':
@@ -587,7 +613,9 @@ def energy_minimize(list_structure,
                     allocate_func, force_func,
                     init_LR = 0.001,
                     minim_steps = 100,
-                    target_RMSG = 1.0):
+                    target_RMSG = 1.0,
+                    amberPrms=None,
+                    ff_type_int=None):
   '''
   Energy minimize the given structures
   '''
@@ -644,7 +672,12 @@ def energy_minimize(list_structure,
         (energy, ch), grads = force_func(list_sub_cur_pos[i],
                                  list_sub_structure[i],
                                  sub_nbr,
-                                 force_field)
+                                 force_field,
+                                 amberPrms,
+                                 ff_type_int)
+        #print("Energy and grads", energy, grads)
+        #print("len shape", len(list_sub_cur_pos[i]))
+        #print(list_sub_cur_pos[i])
 
         cur_loss_vals[i] = jnp.sum(energy)
         cur_RMSG = jax.jit(calculate_RMSG)(grads, list_sub_structure[i].atom_count)
@@ -769,7 +802,9 @@ def train_FF(params, param_indices, param_bounds, force_field,
       [list_positions, cur_total_energy,
       center_sizes, cur_RMSG_vals] = minim_func(list_structure,
                                                 center_sizes,
-                                                force_field)
+                                                force_field,
+                                                amberPrms=amberPrms,
+                                                ff_type_int=ff_type_int)
       minim_end = time.time()
       print("Energy minimization took {:.4f} sec.".format(minim_end-minim_start))
       print('  Total pot. E: {:.2f} kcal/mol'.format(cur_total_energy))
