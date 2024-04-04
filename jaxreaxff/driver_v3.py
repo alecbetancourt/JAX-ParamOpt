@@ -12,6 +12,7 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
 #os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import jax
 jax.config.update("jax_enable_x64", True)
+#jax.config.update("jax_disable_jit", True)
 import jax.profiler
 import jax.numpy as jnp
 import numpy as onp
@@ -343,6 +344,7 @@ def main():
   force_f = jax.jit(jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
                                             has_aux=True),
                          in_axes=(0,0,0,None,0,None)), static_argnames=('ff_type_int'))
+  
   # force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
   #                                            has_aux=True),
   #                         in_axes=(0,0,0,None,0,None))

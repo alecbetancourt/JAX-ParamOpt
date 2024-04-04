@@ -35,6 +35,9 @@ dgrrdn = 1.0/rdndgr
 #from jax_md.amber.amber_energy import calculate_amber_energy
 import jax_md.amber.amber_energy as amber
 from jax_md.reaxff.reaxff_energy import calculate_eem_charges, taper
+#jax.config.update("jax_debug_nans", True)
+#jax.config.update("jax_disable_jit", True)
+
 
 def amber_eem_energy(pos,
                      boxVectors,
@@ -102,12 +105,26 @@ def amber_eem_energy(pos,
   # print("Charges EEM", charges)
   
   original_chgs, pairs, pairs14, scee = cprm
+
+  # TODO: spurious charge appearing in last (masked) position in structure
+  # figure out if this has an impact on the gradient and potentially
+  # resize to exactly len(numatoms) with a mask on the final energies
+  # also consider mask for every nrg term to ensure numerical correctness
+  # also evaluate if charge generation even has any effects on gradient
+  # due to using positions from external interaction lists
+
+  # mask eem charges to remove spurious charges from mask
+  charges = jnp.where(jnp.isclose(original_chgs, 0.), 0., charges)
+
   cprm = (charges, pairs, pairs14, scee)
+
+  # print("Charges", charges)
+  # print("Original Charges", original_chgs)
   # print(original_chgs)
   # print("EEM Charges")
   # print(charges)
-  # print("positions")
-  # print(pos)
+  #print("positions")
+  #print(pos)
   # print("aprm")
   # print(aprm)
 
@@ -115,15 +132,29 @@ def amber_eem_energy(pos,
   #print("energies")
   totalE = 0
   totalE += amber.bond_get_energy(pos, boxVectors, bprm)
-  #print(totalE)
+  # bond_grad_fn = jax.grad(amber.bond_get_energy)
+  # print("Bond Grad", bond_grad_fn(pos, boxVectors, bprm))
+  #print("Bond E", totalE)
   totalE += amber.angle_get_energy(pos, boxVectors, aprm)
-  #print(totalE)
+  # angle_grad_fn = jax.grad(amber.angle_get_energy)
+  # print("Angle Grad", angle_grad_fn(pos, boxVectors, aprm))
+  #print("Angle E", totalE)
   totalE += amber.torsion_get_energy(pos, boxVectors, tprm)
-  #print(totalE)
+  # torsion_grad_fn = jax.grad(amber.torsion_get_energy)
+  # print("Torsion Grad", torsion_grad_fn(pos, boxVectors, tprm))
+  #print("Torsion E", totalE)
+  #sys.exit()
   totalE += amber.lj_get_energy(pos, boxVectors, lprm)
-  #print(totalE)
+  # lj_grad_fn = jax.grad(amber.lj_get_energy)
+  # print("LJ Grad", lj_grad_fn(pos, boxVectors, lprm))
+  #print("LJ E", totalE)
+  #sys.exit()
   totalE += amber.coul_get_energy(pos, boxVectors, cprm)
-  #print(totalE)
+  # coul_grad_fn = jax.grad(amber.coul_get_energy)
+  # print("Coul Grad", coul_grad_fn(pos, boxVectors, cprm))
+  #print("Coul E", totalE)
+  # sys.exit()
+  #print("Positions", pos)
   #sys.exit()
 
   # return energy and charges to preserve modularity with existing reaxff code
@@ -446,7 +477,7 @@ def calculate_loss(force_field,
                                 ff_type_int)
     # print("charges post vmap", charges)
     # print("charges post shape", charges.shape)
-    # print("nrg post vmap", energy)
+    #print("nrg post vmap", energy)
     # print("nrg post shape", energy.shape)
     # print("atm count i", atom_counts[i])
     charges = charges[:, :atom_counts[i]]
@@ -675,7 +706,7 @@ def energy_minimize(list_structure,
                                  force_field,
                                  amberPrms,
                                  ff_type_int)
-        #print("Energy and grads", energy, grads)
+        #print("Minimization Energy", energy)
         #print("len shape", len(list_sub_cur_pos[i]))
         #print(list_sub_cur_pos[i])
 
@@ -807,7 +838,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
                                                 ff_type_int=ff_type_int)
       minim_end = time.time()
       print("Energy minimization took {:.4f} sec.".format(minim_end-minim_start))
-      print('  Total pot. E: {:.2f} kcal/mol'.format(cur_total_energy))
+      print('   . E: {:.2f} kcal/mol'.format(cur_total_energy))
       # print informative RMSG info to show how many structures are properly
       # energy minimized
       for rmsg_limit in [1.0, 2.5, 5.0]:

@@ -83,6 +83,8 @@ def align_forcefield(structures, max_sizes, dtype=onp.float32):
     full_size = len(structures)
     #num_atoms = max_sizes['num_atoms']
 
+    #b_k = onp.zeros(shape=(full_size,max_sizes['b_k']), dtype=dtype)
+    #b_l = onp.zeros(shape=(full_size,max_sizes['b_l']), dtype=dtype)
     b_k = onp.zeros(shape=(full_size,max_sizes['b_k']+1), dtype=dtype)
     b_l = onp.zeros(shape=(full_size,max_sizes['b_l']+1), dtype=dtype)
     #b_1_idx = onp.zeros(shape=(full_size,max_sizes['b_1_idx']+1), dtype=onp.int32)
@@ -126,10 +128,10 @@ def align_forcefield(structures, max_sizes, dtype=onp.float32):
     lj_type = onp.full(shape=(full_size, max_sizes['lj_type']), fill_value=-1, dtype=onp.int32)
     sigma = onp.zeros(shape=(full_size,max_sizes['sigma']+1), dtype=dtype)
     epsilon = onp.zeros(shape=(full_size,max_sizes['epsilon']+1), dtype=dtype)
-    scnb = onp.zeros(shape=(full_size,max_sizes['scnb']+1), dtype=dtype)
+    scnb = onp.zeros(shape=(full_size,max_sizes['scnb']+1), dtype=dtype)+1 # for masking
     
     charges = onp.zeros(shape=(full_size,max_sizes['charges']+1), dtype=dtype)
-    scee = onp.zeros(shape=(full_size,max_sizes['scee']+1), dtype=dtype)
+    scee = onp.zeros(shape=(full_size,max_sizes['scee']+1), dtype=dtype)+1 # for masking
 
     #store box vectors?
 
