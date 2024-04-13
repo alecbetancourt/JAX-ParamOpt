@@ -33,9 +33,12 @@ cuda_version = "cuda{}".format(cuda_version.replace(".",""))
 '''
 
 INSTALL_REQUIRES = [
-  'jax>=0.4.13,<=0.4.23',
-  'jaxlib>=0.4.13,<=0.4.23',
-  'jax_md @ git+https://github.com/cagrikymk/jax-md.git@reaxff_dev#egg=jax_md',
+  #'jax>=0.4.13,<=0.4.23',
+  #'jaxlib>=0.4.13,<=0.4.23',
+  #'jax_md @ git+https://github.com/cagrikymk/jax-md.git@reaxff_dev#egg=jax_md',
+  #'jax>=0.4.13,<=0.4.23',
+  #'jaxlib>=0.4.13,<=0.4.23',
+  #'jax_md @ git+https://github.com/alecbetancourt/jax-md.git@amber#egg=jax_md',
   'numba>=0.56',
   'numpy',
   'scipy>=1.2.1',
@@ -49,7 +52,7 @@ INSTALL_REQUIRES = [
 this_directory = os.path.abspath(os.path.dirname(__file__))
 with io.open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
   long_description = f.read()
-  
+
 setup(
    name='jaxreaxff',
    version='0.2.0',
@@ -66,5 +69,5 @@ setup(
    long_description_content_type='text/markdown',
    python_requires='>=3.7',
    install_requires=INSTALL_REQUIRES,
-   
+
 )

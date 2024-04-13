@@ -1,0 +1,12 @@
+1) add the .xyz file of the molecule of interest in the 0_xyz_files folder
+2) go to the 1_run_Gaussian_files directory and execute run_calcs.sh script to perform gaussian calculations for each molecule
+3) go to the 2_log_to_mol2 directory and execute RESP_after_Gaussian.sh script to generate the .mol2 files 
+4) go to the 3_create_geo_multiple_atomtypes_gaff directory and execute the following scripts respectively to generate prmtop and .xyz files with multiple atom types
+
+   -  run_all_mobley_AMBER_charges.sh to generate charges and atomtypes
+   -  create_xyz_file.sh
+   -  cat_all_xyz.sh
+
+6) create geo file using xtob: 
+   ./xtob (eneter these : all_molecs.xyz , n , 0)
+   convert fort.15 to geo

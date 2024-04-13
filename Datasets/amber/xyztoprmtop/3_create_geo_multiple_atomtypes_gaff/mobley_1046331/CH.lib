@@ -1,0 +1,124 @@
+!!index array str
+ "AAA"
+!entry.AAA.unit.atoms table  str name  str type  int typex  int resx  int flags  int seq  int elmnt  dbl chg
+ "C1" "ca" 0 1 131072 1 6 -0.154737
+ "C2" "ca" 0 1 131072 2 6 -0.126617
+ "C3" "ca" 0 1 131072 3 6 -0.277071
+ "C4" "ca" 0 1 131072 4 6 0.471346
+ "C5" "ca" 0 1 131072 5 6 -0.277071
+ "C6" "ca" 0 1 131072 6 6 -0.126617
+ "O1" "os" 0 1 131072 7 8 -0.520722
+ "C7" "c" 0 1 131072 8 6 0.745984
+ "O2" "o" 0 1 131072 9 8 -0.561340
+ "H1" "ha" 0 1 131072 10 1 0.143442
+ "H2" "ha" 0 1 131072 11 1 0.149915
+ "H3" "ha" 0 1 131072 12 1 0.184679
+ "H4" "ha" 0 1 131072 13 1 0.184679
+ "H5" "ha" 0 1 131072 14 1 0.149915
+ "H6" "h5" 0 1 131072 15 1 0.014216
+!entry.AAA.unit.atomspertinfo table  str pname  str ptype  int ptypex  int pelmnt  dbl pchg
+ "C1" "ca" 0 -1 0.0
+ "C2" "ca" 0 -1 0.0
+ "C3" "ca" 0 -1 0.0
+ "C4" "ca" 0 -1 0.0
+ "C5" "ca" 0 -1 0.0
+ "C6" "ca" 0 -1 0.0
+ "O1" "os" 0 -1 0.0
+ "C7" "c" 0 -1 0.0
+ "O2" "o" 0 -1 0.0
+ "H1" "ha" 0 -1 0.0
+ "H2" "ha" 0 -1 0.0
+ "H3" "ha" 0 -1 0.0
+ "H4" "ha" 0 -1 0.0
+ "H5" "ha" 0 -1 0.0
+ "H6" "h5" 0 -1 0.0
+!entry.AAA.unit.boundbox array dbl
+ -1.000000
+ 0.0
+ 0.0
+ 0.0
+ 0.0
+!entry.AAA.unit.childsequence single int
+ 2
+!entry.AAA.unit.connect array int
+ 0
+ 0
+!entry.AAA.unit.connectivity table  int atom1x  int atom2x  int flags
+ 1 2 4
+ 1 6 4
+ 1 10 1
+ 2 3 4
+ 2 11 1
+ 3 4 4
+ 3 12 1
+ 4 5 4
+ 4 7 1
+ 5 6 4
+ 5 13 1
+ 6 14 1
+ 7 8 1
+ 8 9 2
+ 8 15 1
+!entry.AAA.unit.hierarchy table  str abovetype  int abovex  str belowtype  int belowx
+ "U" 0 "R" 1
+ "R" 1 "A" 1
+ "R" 1 "A" 2
+ "R" 1 "A" 3
+ "R" 1 "A" 4
+ "R" 1 "A" 5
+ "R" 1 "A" 6
+ "R" 1 "A" 7
+ "R" 1 "A" 8
+ "R" 1 "A" 9
+ "R" 1 "A" 10
+ "R" 1 "A" 11
+ "R" 1 "A" 12
+ "R" 1 "A" 13
+ "R" 1 "A" 14
+ "R" 1 "A" 15
+!entry.AAA.unit.name single str
+ "MOL"
+!entry.AAA.unit.positions table  dbl x  dbl y  dbl z
+ 2.471000 0.0 0.322000
+ 1.804000 -1.199000 0.129000
+ 0.473000 -1.204000 -0.255000
+ -0.175000 0.0 -0.439000
+ 0.473000 1.204000 -0.255000
+ 1.804000 1.199000 0.128000
+ -1.488000 0.0 -0.883000
+ -2.478000 0.0 0.006000
+ -2.364000 0.0 1.178000
+ 3.504000 0.0 0.619000
+ 2.317000 -2.132000 0.276000
+ -0.058000 -2.125000 -0.412000
+ -0.058000 2.125000 -0.413000
+ 2.317000 2.132000 0.275000
+ -3.426000 0.0 -0.521000
+!entry.AAA.unit.residueconnect table  int c1x  int c2x  int c3x  int c4x  int c5x  int c6x
+ 0 0 0 0 0 0
+!entry.AAA.unit.residues table  str name  int seq  int childseq  int startatomx  str restype  int imagingx
+ "MOL" 1 16 1 "?" 0
+!entry.AAA.unit.residuesPdbSequenceNumber array int
+ 0
+!entry.AAA.unit.solventcap array dbl
+ -1.000000
+ 0.0
+ 0.0
+ 0.0
+ 0.0
+!entry.AAA.unit.velocities table  dbl x  dbl y  dbl z
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0
+ 0.0 0.0 0.0

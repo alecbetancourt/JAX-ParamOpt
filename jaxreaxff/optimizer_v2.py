@@ -128,34 +128,35 @@ def amber_eem_energy(pos,
   # print("aprm")
   # print(aprm)
 
+
   # call amber function to return required observable
   #print("energies")
   totalE = 0
   totalE += amber.bond_get_energy(pos, boxVectors, bprm)
   # bond_grad_fn = jax.grad(amber.bond_get_energy)
   # print("Bond Grad", bond_grad_fn(pos, boxVectors, bprm))
-  #print("Bond E", totalE)
+  # print("Bond E", amber.bond_get_energy(pos, boxVectors, bprm))
   totalE += amber.angle_get_energy(pos, boxVectors, aprm)
   # angle_grad_fn = jax.grad(amber.angle_get_energy)
   # print("Angle Grad", angle_grad_fn(pos, boxVectors, aprm))
-  #print("Angle E", totalE)
+  # print("Angle E", amber.angle_get_energy(pos, boxVectors, aprm))
   totalE += amber.torsion_get_energy(pos, boxVectors, tprm)
   # torsion_grad_fn = jax.grad(amber.torsion_get_energy)
   # print("Torsion Grad", torsion_grad_fn(pos, boxVectors, tprm))
-  #print("Torsion E", totalE)
+  # print("Torsion E", amber.torsion_get_energy(pos, boxVectors, tprm))
   #sys.exit()
   totalE += amber.lj_get_energy(pos, boxVectors, lprm)
   # lj_grad_fn = jax.grad(amber.lj_get_energy)
   # print("LJ Grad", lj_grad_fn(pos, boxVectors, lprm))
-  #print("LJ E", totalE)
+  # print("LJ E", amber.lj_get_energy(pos, boxVectors, lprm))
   #sys.exit()
   totalE += amber.coul_get_energy(pos, boxVectors, cprm)
   # coul_grad_fn = jax.grad(amber.coul_get_energy)
   # print("Coul Grad", coul_grad_fn(pos, boxVectors, cprm))
-  #print("Coul E", totalE)
+  # print("Coul E", amber.coul_get_energy(pos, boxVectors, cprm))
   # sys.exit()
   #print("Positions", pos)
-  #sys.exit()
+  # sys.exit()
 
   # return energy and charges to preserve modularity with existing reaxff code
   return totalE, charges

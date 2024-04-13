@@ -156,8 +156,12 @@ def main():
       help='Torsions file for AMBER Optimization')
   parser.add_argument('--init_FF_amber', metavar='filename',
       type=str,
-      default="ffield",
+      default="Datasets/amber/xyztoprmtop/3_create_geo_multiple_atomtypes_gaff",
       help='Directory where AMBER force field files will be generated for geometries')
+  parser.add_argument('--generate_prmtop', metavar='value',
+      type=bool,
+      default=False,
+      help='Boolean to determine if prmtop files need to be generated from .xyz files')
 
   #parse arguments
   args = parser.parse_args()
@@ -166,6 +170,18 @@ def main():
   ff_type_int = ff_type_map[args.ff_type]
   # TODO: Rationalize default values and types to enable seamless switching with missing arguments
   aligned_amber_ff = None
+
+  #TODO: fix imports and remove anything that isn't necessary
+  import subprocess
+  if(args.generate_prmtop):
+    # should error stream be seperated?
+    #foo > stdout.txt 2> stderr.txt
+    #foo > allout.txt 2>&1
+    #TODO: add error handling here if anything appears in stderr
+    with open('convert.stdout', 'w') as stdout_f, open('convert.stderr', 'w') as stderr_f:
+      subprocess.call("./convert.sh", cwd="./Datasets/amber/xyztoprmtop", stdout = stdout_f, stderr = stderr_f)
+
+  #sys.exit()
 
   from jaxreaxff.optimizer_amber import ff_opt
   if(args.ff_type == 'amber'):
@@ -195,6 +211,7 @@ def main():
     # for vmap compatibility, see: https://stackoverflow.com/questions/73765064/jax-vmap-over-batch-of-dataclasses
     # the aligning done to the list structures may also serve this purpose if there isn't an underlying mechanism that works
     flist = build_prm_list(args.geo, args.init_FF_amber)
+    #print("Flist", flist)
     prm_dict_list, max_sizes = load_ff(flist)
     # for prm in prm_dict_list:
     #   for key, value in prm.items():

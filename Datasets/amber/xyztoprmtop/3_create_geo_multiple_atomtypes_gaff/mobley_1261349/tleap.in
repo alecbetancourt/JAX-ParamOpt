@@ -1,0 +1,7 @@
+source leaprc.gaff
+AAA= loadmol2 CH.mol2 
+check AAA
+loadamberparams CH.frcmod
+saveoff AAA CH.lib 
+saveamberparm AAA prmtop inpcrd
+quit

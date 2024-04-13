@@ -160,8 +160,14 @@ def align_forcefield(structures, max_sizes, dtype=onp.float32):
         t_4_idx[i,:len(s['t_4_idx'])] = s['t_4_idx']
         t_prm_idx[i,:len(s['t_prm_idx'])] = s['t_prm_idx']
 
-        pairs[i,:len(s['pairs']),:] = s['pairs']
-        pairs14[i,:len(s['pairs14']),:] = s['pairs14']
+        # print("I", i)
+        # print("Pairs and 14 Shape", s['pairs'].size, "\n", s['pairs14'].size)
+        # print("Pairs and 14", s['pairs'], "\n", s['pairs14'])
+
+        if s['pairs'].size > 0:
+            pairs[i,:len(s['pairs']),:] = s['pairs']
+        if s['pairs14'].size > 0:
+            pairs14[i,:len(s['pairs14']),:] = s['pairs14']
 
         lj_type[i,:len(s['lj_type'])] = s['lj_type']
         sigma[i,:len(s['sigma'])] = s['sigma']
