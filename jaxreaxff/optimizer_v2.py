@@ -157,6 +157,8 @@ def amber_eem_energy(pos,
   # sys.exit()
   #print("Positions", pos)
   # sys.exit()
+  # print("Total E", totalE)
+  # sys.exit()
 
   # return energy and charges to preserve modularity with existing reaxff code
   return totalE, charges

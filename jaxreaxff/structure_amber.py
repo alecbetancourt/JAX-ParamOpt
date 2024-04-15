@@ -260,6 +260,7 @@ def load_ff(prm_list):
     prm_dict_list = []
     #print(flist)
     for f in prm_list:
+        #print("File:", f)
         prm_dict = {}
         prmtop = omm.app.AmberPrmtopFile(f)
 

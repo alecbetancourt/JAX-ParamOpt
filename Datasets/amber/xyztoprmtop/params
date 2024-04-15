@@ -1,0 +1,177 @@
+  2  1  6  0.005   1.20    0.10    !                    C_gammaEEM Shielding
+  2  1 14  0.050  12.00   -4.00    !                    C_electronegativity
+  2  1 15  0.050  12.00    0.30    !                    C_Hardness
+  2  2  6  0.005   1.20    0.10    !                    H_gammaEEM Shielding
+  2  2 14  0.050  12.00   -4.00    !                    H_electronegativity
+  2  2 15  0.050  12.00    0.30    !                    H_Hardness
+  2  3  6  0.005   1.20    0.10    !                    O_gammaEEM Shielding
+  2  3 14  0.050  12.00   -4.00    !                    O_electronegativity
+  2  3 15  0.050  12.00    0.30    !                    O_Hardness
+  2  4  6  0.005   1.20    0.10    !                    N_gammaEEM Shielding
+  2  4 14  0.050  12.00   -4.00    !                    N_electronegativity
+  2  4 15  0.050  12.00    0.30    !                    N_Hardness
+  2  5  6  0.005   1.20    0.10    !                    S_gammaEEM Shielding
+  2  5 14  0.050  12.00   -4.00    !                    S_electronegativity
+  2  5 15  0.050  12.00    0.30    !                    S_Hardness
+  2  6  6  0.005   1.20    0.10    !                    S_gammaEEM Shielding
+  2  6 14  0.050  12.00   -4.00    !                    S_electronegativity
+  2  6 15  0.050  12.00    0.30    !                    S_Hardness
+  2  7  6  0.005   1.20    0.10    !                    P_gammaEEM Shielding
+  2  7 14  0.050  12.00   -4.00    !                    P_electronegativity
+  2  7 15  0.050  12.00    0.30    !                    P_Hardness
+  2  8  6  0.005   1.20    0.10    !                    C_gammaEEM Shielding
+  2  8 14  0.050  12.00   -4.00    !                    C_electronegativity
+  2  8 15  0.050  12.00    0.30    !                    C_Hardness
+  2  9  6  0.005   1.20    0.10    !                    H_gammaEEM Shielding
+  2  9 14  0.050  12.00   -4.00    !                    H_electronegativity
+  2  9 15  0.050  12.00    0.30    !                    H_Hardness
+  2 10  6  0.005   1.20    0.10    !                    Cl_gammaEEM Shielding
+  2 10 14  0.050  12.00   -4.00    !                    Cl_electronegativity
+  2 10 15  0.050  12.00    0.30    !                    Cl_Hardness
+  2 11  6  0.005   1.20    0.10    !                    F_gammaEEM Shielding
+  2 11 14  0.050  12.00   -4.00    !                    F_electronegativity
+  2 11 15  0.050  12.00    0.30    !                    F_Hardness
+  2 12  6  0.005   1.20    0.10    !                    F_gammaEEM Shielding
+  2 12 14  0.050  12.00   -4.00    !                    F_electronegativity
+  2 12 15  0.050  12.00    0.30    !                    F_Hardness
+  2 13  6  0.005   1.20    0.10    !                    Br_gammaEEM Shielding
+  2 13 14  0.050  12.00   -4.00    !                    Br_electronegativity
+  2 13 15  0.050  12.00    0.30    !                    Br_Hardness
+  2 14  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 14 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 14 15  0.050  12.00    0.30    !                    I_Hardness
+  2 15  6  0.005   1.20    0.10    !                    C_gammaEEM Shielding
+  2 15 14  0.050  12.00   -4.00    !                    C_electronegativity
+  2 15 15  0.050  12.00    0.30    !                    C_Hardness
+  2 16  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 16 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 16 15  0.050  12.00    0.30    !                    I_Hardness
+  2 17  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 17 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 17 15  0.050  12.00    0.30    !                    I_Hardness
+  2 18  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 18 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 18 15  0.050  12.00    0.30    !                    I_Hardness
+  2 19  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 19 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 19 15  0.050  12.00    0.30    !                    I_Hardness
+  2 20  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 20 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 20 15  0.050  12.00    0.30    !                    I_Hardness
+  2 21  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 21 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 21 15  0.050  12.00    0.30    !                    I_Hardness
+  2 22  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 22 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 22 15  0.050  12.00    0.30    !                    I_Hardness
+  2 23  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 23 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 23 15  0.050  12.00    0.30    !                    I_Hardness
+  2 24  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 24 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 24 15  0.050  12.00    0.30    !                    I_Hardness
+  2 25  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 25 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 25 15  0.050  12.00    0.30    !                    I_Hardness
+  2 26  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 26 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 26 15  0.050  12.00    0.30    !                    I_Hardness
+  2 27  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 27 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 27 15  0.050  12.00    0.30    !                    I_Hardness
+  2 28  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 28 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 28 15  0.050  12.00    0.30    !                    I_Hardness
+  2 29  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 29 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 29 15  0.050  12.00    0.30    !                    I_Hardness
+  2 30  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 30 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 30 15  0.050  12.00    0.30    !                    I_Hardness
+  2 31  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 31 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 31 15  0.050  12.00    0.30    !                    I_Hardness
+  2 32  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 32 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 32 15  0.050  12.00    0.30    !                    I_Hardness
+  2 33  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 33 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 33 15  0.050  12.00    0.30    !                    I_Hardness
+  2 34  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 34 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 34 15  0.050  12.00    0.30    !                    I_Hardness
+  2 35  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 35 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 35 15  0.050  12.00    0.30    !                    I_Hardness
+  2 36  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 36 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 36 15  0.050  12.00    0.30    !                    I_Hardness
+  2 37  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 37 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 37 15  0.050  12.00    0.30    !                    I_Hardness
+  2 38  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 38 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 38 15  0.050  12.00    0.30    !                    I_Hardness
+  2 39  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 39 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 39 15  0.050  12.00    0.30    !                    I_Hardness
+  2 40  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 40 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 40 15  0.050  12.00    0.30    !                    I_Hardness
+  2 41  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 41 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 41 15  0.050  12.00    0.30    !                    I_Hardness
+  2 42  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 42 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 42 15  0.050  12.00    0.30    !                    I_Hardness
+  2 43  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 43 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 43 15  0.050  12.00    0.30    !                    I_Hardness
+  2 44  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 44 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 44 15  0.050  12.00    0.30    !                    I_Hardness
+  2 45  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 45 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 45 15  0.050  12.00    0.30    !                    I_Hardness
+  2 46  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 46 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 46 15  0.050  12.00    0.30    !                    I_Hardness
+  2 47  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 47 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 47 15  0.050  12.00    0.30    !                    I_Hardness
+  2 48  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 48 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 48 15  0.050  12.00    0.30    !                    I_Hardness
+  2 49  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 49 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 49 15  0.050  12.00    0.30    !                    I_Hardness
+  2 50  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 50 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 50 15  0.050  12.00    0.30    !                    I_Hardness
+  2 51  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 51 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 51 15  0.050  12.00    0.30    !                    I_Hardness
+  2 52  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 52 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 52 15  0.050  12.00    0.30    !                    I_Hardness
+  2 53  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 53 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 53 15  0.050  12.00    0.30    !                    I_Hardness
+  2 54  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 54 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 54 15  0.050  12.00    0.30    !                    I_Hardness
+  2 55  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 55 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 55 15  0.050  12.00    0.30    !                    I_Hardness
+  2 56  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 56 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 56 15  0.050  12.00    0.30    !                    I_Hardness
+  2 57  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 57 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 57 15  0.050  12.00    0.30    !                    I_Hardness
+  2 58  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 58 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 58 15  0.050  12.00    0.30    !                    I_Hardness
+  2 59  6  0.005   1.20    0.10    !                    I_gammaEEM Shielding
+  2 59 14  0.050  12.00   -4.00    !                    I_electronegativity
+  2 59 15  0.050  12.00    0.30    !                    I_Hardness
