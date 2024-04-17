@@ -4,6 +4,7 @@ Array = util.Array
 import jax_md.amber.amber_energy as amber
 #from jaxreaxff.generate_prmtop import build_prm_list
 import openmm as omm
+import openmm.app as app
 
 #bond angle torsion lj coul init
 #(k, l, b1_idx, b2_idx, param_index)
@@ -262,7 +263,7 @@ def load_ff(prm_list):
     for f in prm_list:
         #print("File:", f)
         prm_dict = {}
-        prmtop = omm.app.AmberPrmtopFile(f)
+        prmtop = app.AmberPrmtopFile(f)
 
         #(k, l, b1_idx, b2_idx, param_index)
         #(k, eqangle, a1_idx, a2_idx, a3_idx, param_index)

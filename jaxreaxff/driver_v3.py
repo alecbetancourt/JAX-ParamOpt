@@ -206,6 +206,7 @@ def main():
   from jaxreaxff.generate_prmtop import build_prm_list
   from jaxreaxff.structure_amber import load_ff, align_forcefield
   import openmm as omm
+  import openmm.app as app
   if(args.ff_type == 'ambereem'):
     print("[INFO] Starting AMBER Optimization w/ EEM")
     # TODO: this eventually needs to be rolled into a dataclass and some work will have to be done to create a treemap
@@ -431,11 +432,23 @@ def main():
   #   omm_nrg = state.getPotentialEnergy()._value
 
   #   print("OpenMM Energy", omm_nrg)
-  #   print("Energy Differences (Absolute, Percentage)", abs(jax_nrg-omm_nrg), ',', abs(abs(jax_nrg-omm_nrg)/jax_nrg)*100, '%')
+  #   print("Energy Differences (Absolute , Percentage):", abs(jax_nrg-omm_nrg), ',', abs(abs(jax_nrg-omm_nrg)/jax_nrg)*100, '%')
 
   #   #compare and find percent deviation, rms, etc
+  #   g_en_fn = jax.grad(en_fn)
+  #   jax_forces = g_en_fn(positions)[:natom]
 
-  #   sys.exit()
+  #   print("Force Differnces (Percentage-Maximum Component)")
+  #   diff = []
+  #   #print("frc len", omm_forces.shape)
+  #   #print("jax len", jax_forces.shape)
+  #   for i in range(len(jax_forces)):
+  #     jax_frc = jnp.linalg.norm(jax_forces[i])
+  #     omm_frc = jnp.linalg.norm(omm_forces[i]._value)
+  #     diff.append(abs(jax_frc-omm_frc)/jax_frc)
+  #   print(max(diff))
+
+  # sys.exit()
 
   def new_loss_and_grad_func(params, param_indices,
                              force_field, training_data,

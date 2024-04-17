@@ -7,7 +7,7 @@ import jax_md
 import matplotlib.pyplot as plt
 import jax_md.amber.amber_energy as amber
 #import parmed as pmd
-import simtk.openmm as omm
+import openmm as omm
 jax.config.update("jax_enable_x64", True)
 
 # make global array for loss
