@@ -178,8 +178,9 @@ def main():
     #foo > stdout.txt 2> stderr.txt
     #foo > allout.txt 2>&1
     #TODO: add error handling here if anything appears in stderr
+    script_path = os.path.dirname(os.path.abspath(__file__)) + '/../Datasets/amber/xyztoprmtop'
     with open('convert.stdout', 'w') as stdout_f, open('convert.stderr', 'w') as stderr_f:
-      subprocess.call("./convert.sh", cwd="./Datasets/amber/xyztoprmtop", stdout = stdout_f, stderr = stderr_f)
+      subprocess.call("./convert.sh", cwd=script_path, stdout = stdout_f, stderr = stderr_f)
 
   #sys.exit()
 
@@ -379,7 +380,62 @@ def main():
   # loss_func = calculate_loss
 
 
+  # #aligned_data
+  # #aligned_amber_forcefield
+  # #flist
+  # list_positions = [s.positions for s in aligned_data]
+  # list_positions = list_positions[0] # 18,27,3 shape
+  # list_positions = onp.array(list_positions)
+  # #print(len(aligned_amber_ff))
+  # for i in range(18):
+  #   print(flist[i])
+  #   inpcrd = omm.app.AmberInpcrdFile(flist[i][:-7]+'/inpcrd')
+  #   prmtop = omm.app.AmberPrmtopFile(flist[i])
+  #   positions = list_positions[i]/10 # A -> NM
+  #   amberPrms = aligned_amber_ff
+  #   #print(prmtop._prmtop._raw_data['POINTERS'][0])
+  #   natom = int(prmtop._prmtop._raw_data['POINTERS'][0])
+  #   bondprm = (amberPrms.b_k[i], amberPrms.b_l[i], amberPrms.b_1_idx[i], amberPrms.b_2_idx[i], amberPrms.b_prm_idx[i])
+  #   angleprm = (amberPrms.a_k[i], amberPrms.a_eq_ang[i], amberPrms.a_1_idx[i], amberPrms.a_2_idx[i], amberPrms.a_3_idx[i], amberPrms.a_prm_idx[i])
+  #   torsionprm = (amberPrms.t_k[i], amberPrms.t_phase[i], amberPrms.t_period[i], amberPrms.t_1_idx[i], amberPrms.t_2_idx[i], amberPrms.t_3_idx[i], amberPrms.t_4_idx[i], amberPrms.t_prm_idx[i])
+  #   ljprm = (amberPrms.pairs[i], amberPrms.pairs14[i], amberPrms.lj_type[i], amberPrms.sigma[i], amberPrms.epsilon[i], amberPrms.scnb[i])
+  #   coulprm = (amberPrms.charges[i], amberPrms.pairs[i], amberPrms.pairs14[i], amberPrms.scee[i])
 
+  #   #get point energies and forces from jax
+  #   boxVectors = jnp.array([100.0,100.0,100.0])
+  #   def en_fn(pos):
+  #     totalE = 0
+  #     totalE += amber.bond_get_energy(pos, boxVectors, bondprm)
+  #     totalE += amber.angle_get_energy(pos, boxVectors, angleprm)
+  #     totalE += amber.torsion_get_energy(pos, boxVectors, torsionprm)
+  #     totalE += amber.lj_get_energy(pos, boxVectors, ljprm)
+  #     totalE += amber.coul_get_energy(pos, boxVectors, coulprm)
+  #     return totalE
+
+  #   jax_nrg = en_fn(positions)
+  #   print("JAX Energy", jax_nrg)
+
+  #   #get point energies and forces from omm
+  #   system = prmtop.createSystem(nonbondedMethod=omm.app.NoCutoff, removeCMMotion=False)
+  #   #boxVectors = jnp.array([v._value for v in system.getDefaultPeriodicBoxVectors()])
+  #   #boxVectors = boxVectors.sum(axis=0)
+  #   integrator = omm.VerletIntegrator(0.001*omm.unit.picoseconds)
+  #   simulation = omm.app.Simulation(prmtop.topology, system, integrator)
+  #   #print(positions.shape)
+  #   #print(positions[:natom])
+  #   simulation.context.setPositions(positions[:natom])
+  #   #simulation.context.setPositions(inpcrd.positions)
+  #   state = simulation.context.getState(getEnergy=True, getForces=True)
+
+  #   omm_forces = state.getForces(asNumpy=True)
+  #   omm_nrg = state.getPotentialEnergy()._value
+
+  #   print("OpenMM Energy", omm_nrg)
+  #   print("Energy Differences (Absolute, Percentage)", abs(jax_nrg-omm_nrg), ',', abs(abs(jax_nrg-omm_nrg)/jax_nrg)*100, '%')
+
+  #   #compare and find percent deviation, rms, etc
+
+  #   sys.exit()
 
   def new_loss_and_grad_func(params, param_indices,
                              force_field, training_data,
