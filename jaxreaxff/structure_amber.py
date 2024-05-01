@@ -76,7 +76,15 @@ class AmberForceField(object):
     charges: Array
     scee: Array
 
-
+def align_and_batch_forcefield(structures, max_sizes, batch_size, dtype=onp.float32):
+    full_size = len(structures)
+    batches = []
+    #for bs in range(0,abs(full_size-batch_size),batch_size):
+    for bs in range(0,full_size,batch_size):
+        batch = align_forcefield(structures[bs:bs+batch_size],
+                                max_sizes, dtype)
+        batches.append(batch)
+    return batches
 
 # use onp for all this to avoid tracing
 # likely need to eventually record lengths instead of applying a mask to keep track of unused indices

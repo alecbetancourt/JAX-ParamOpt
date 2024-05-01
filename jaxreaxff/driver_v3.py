@@ -11,9 +11,11 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
 #os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 #os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import jax
+#TODO: Implement type switching between single and double precision
 jax.config.update("jax_enable_x64", True)
 #jax.config.update("jax_disable_jit", True)
 import jax.profiler
+import jax_md
 import jax.numpy as jnp
 import numpy as onp
 import time
@@ -28,11 +30,11 @@ from jaxreaxff.optimizer_v2 import (calculate_loss,
                                  calculate_energy_and_charges_w_rest,
                                  add_noise_to_params, random_parameter_search,
                                  train_FF, energy_minimize, update_inter_sizes)
-from jaxreaxff.helper import set_params, get_params, produce_error_report
+from jaxreaxff.helper import set_params, get_params, produce_error_report, count_inter_list_sizes
 from jaxreaxff.interactions import (reaxff_interaction_list_generator,
                                     calculate_dist_and_angles,
                                     DYNAMIC_INTERACTION_KEYS)
-from jaxreaxff.structure import align_structures
+from jaxreaxff.structure import align_structures, align_and_batch_structures
 from jaxreaxff.helper import (move_dataclass, process_and_cluster_geos,
                               create_structure_map, read_parameter_file,
                               map_params, read_geo_file, read_train_set,
@@ -204,22 +206,31 @@ def main():
 
   import jax_md.amber.amber_energy as amber
   from jaxreaxff.generate_prmtop import build_prm_list
-  from jaxreaxff.structure_amber import load_ff, align_forcefield
+  from jaxreaxff.structure_amber import load_ff, align_forcefield, align_and_batch_forcefield
   import openmm as omm
   import openmm.app as app
-  if(args.ff_type == 'ambereem'):
-    print("[INFO] Starting AMBER Optimization w/ EEM")
-    # TODO: this eventually needs to be rolled into a dataclass and some work will have to be done to create a treemap
-    # for vmap compatibility, see: https://stackoverflow.com/questions/73765064/jax-vmap-over-batch-of-dataclasses
-    # the aligning done to the list structures may also serve this purpose if there isn't an underlying mechanism that works
-    flist = build_prm_list(args.geo, args.init_FF_amber)
-    #print("Flist", flist)
-    prm_dict_list, max_sizes = load_ff(flist)
-    # for prm in prm_dict_list:
-    #   for key, value in prm.items():
-    #     print(key, value)
-    # sys.exit()
-    aligned_amber_ff = align_forcefield(prm_dict_list, max_sizes)
+  # if(args.ff_type == 'ambereem'):
+  #   print("[INFO] Starting AMBER Optimization w/ EEM")
+  #   # TODO: this eventually needs to be rolled into a dataclass and some work will have to be done to create a treemap
+  #   # for vmap compatibility, see: https://stackoverflow.com/questions/73765064/jax-vmap-over-batch-of-dataclasses
+  #   # the aligning done to the list structures may also serve this purpose if there isn't an underlying mechanism that works
+  #   flist = build_prm_list(args.geo, args.init_FF_amber)
+  #   #print("Flist", flist)
+  #   prm_dict_list, max_sizes = load_ff(flist)
+  #   # for prm in prm_dict_list:
+  #   #   for key, value in prm.items():
+  #   #     print(key, value)
+  #   # sys.exit()
+    
+  #   #aligned_amber_ff = align_forcefield(prm_dict_list, max_sizes)
+  #   ff_and_geo_batch_size = 40
+
+  #   aligned_amber_ff = align_and_batch_forcefield(prm_dict_list, max_sizes, ff_and_geo_batch_size)
+
+  #   aligned_amber_ff = [move_dataclass(d, jnp) for d in aligned_amber_ff]
+  #   print("aligned ff len", len(aligned_amber_ff))
+  #   print("type", type(aligned_amber_ff[0]))
+
     #print(aligned_amber_ff)
     #sys.exit()
 
@@ -288,6 +299,8 @@ def main():
   # read the geo file
   systems = read_geo_file(args.geo, force_field.name_to_index, 10.0)
 
+  print("[INFO] Number of geometries loaded:", len(systems))
+
   training_data = read_train_set(args.train_file)
   # default value for the valid. data
   validation_data = None
@@ -315,43 +328,451 @@ def main():
   for i,s in enumerate(systems):
       s = dataclasses.replace(s, name = geo_name_to_index[s.name])
       systems[i] = s
+  
 
 
-  ###########################################################################
-  num_threads = os.cpu_count()
-  [globally_sorted_indices,
-   all_cut_indices,
-   center_sizes] = process_and_cluster_geos(systems, force_field,
-                                            max_num_clusters=args.max_num_clusters,
-                                            num_threads=num_threads,
-                                            chunksize=4,
-                                            close_cutoff=5.0, far_cutoff=10.0)
-  for i in range(len(center_sizes)):
-      for k in center_sizes[i].keys():
-          if k in DYNAMIC_INTERACTION_KEYS:
-            multip = 1.5
-            # give extra buffer room if we need to e. minim
-            if (k in ['filter3_size', 'filter4_size']
-                and args.num_e_minim_steps > 0):
-              multip = 2.0
-            center_sizes[i][k] = math.ceil(multip * center_sizes[i][k])
-          if center_sizes[i][k] == 0:
-              center_sizes[i][k] = 1
+  #print("system 485 positions", systems[484].positions)
+  #print("len system 485 positions", len(systems[484].positions))
+  #sys.exit
 
-  aligned_data = []
-  for i in range(len(center_sizes)):
-      zz = align_structures([systems[i] for i in all_cut_indices[i]], center_sizes[i], TYPE)
-      zz = move_dataclass(zz, jnp)
-      aligned_data.append(zz)
+
+
+
+  if(args.ff_type == 'ambereem'):
+      print("[INFO] Starting AMBER Optimization w/ EEM")
+
+      ff_and_geo_batch_size = 40
+
+      num_threads = os.cpu_count()
+      #num_threads = 1
+      #num_threads = 32
+      #print("num_threads", num_threads)
+      #update this to something like
+      #https://stackoverflow.com/questions/76308447/how-to-use-properly-slurm-sbatch-and-python-multiprocessing
+      #ncpus = int(os.environ['SLURM_CPUS_PER_TASK'])
+      #should hopefully return the actual allocated number of cpus
+
+      # [globally_sorted_indices,
+      # all_cut_indices,
+      # center_sizes] = process_and_cluster_geos(systems, force_field,
+      #                                           max_num_clusters=args.max_num_clusters,
+      #                                           num_threads=num_threads,
+      #                                           chunksize=4,
+      #                                           close_cutoff=5.0, far_cutoff=10.0)
+
+      # print("Process and cluster done")
+
+      #batched alloc scheme
+      #find max periodic image counts and atom counts
+      #cluster geos by 20
+      #count interaction lists for each cluster in loop
+      #ideally only count far nbr sizes or figure out alterantive far nbr scheme
+      #would jax md neighbor lists work with indices passed to eem?
+      #center sizes = each cluster's size
+
+      flist = build_prm_list(args.geo, args.init_FF_amber)
+      #print("FLIST", flist)
+
+      def cluster_structs(structures, batch_size, dtype=onp.float64):
+        full_size = len(structures)
+        # max_sizes = {'num_atoms':0, 'periodic_image_count':0}
+        # for struct in structures:
+        #   max_sizes['num_atoms'] = max(max_sizes['num_atoms'], len(struct.atom_types))
+        #   max_sizes['periodic_image_count'] = len(struct.periodic_image_shifts)
+        batches = []
+        ffields = []
+        center_sizes = []
+        for bs in range(0,full_size,batch_size):
+          # max_sizes = {'num_atoms': 0,
+          #      'periodic_image_count': 0,
+          #      'far_nbr_size': 300,
+          #      'close_nbr_size': 300,
+          #      'filter2_size': 300,
+          #      'filter3_size': 300,
+          #      'filter4_size': 300,
+          #      'hbond_size': 300,
+          #      'hbond_h_size': 300,
+          #      'hbond_filter_far_size': 300,
+          #      'hbond_filter_close_size': 300}
+          max_sizes = {'num_atoms': 0,
+               'periodic_image_count': 0,
+               'far_nbr_size': 300}
+          for struct in structures[bs:bs+batch_size]:
+            atom_mask = struct.atom_types != -1
+            max_sizes['num_atoms'] = max(max_sizes['num_atoms'], len(atom_mask))
+            max_sizes['periodic_image_count'] = max(max_sizes['periodic_image_count'], len(struct.periodic_image_shifts))
+          batch = align_structures(structures[bs:bs+batch_size],
+                              max_sizes, dtype)
+          batches.append(batch)
+          center_sizes.append(max_sizes)
+          #print("flists", flist[bs:bs+batch_size])
+          # prm_dict_list, ff_sizes = load_ff(flist[bs:bs+batch_size])
+          # ffield = align_forcefield(prm_dict_list, ff_sizes, dtype)
+          # ffields.append(ffield)
+          
+          # batch_sizes = count_inter_list_sizes(structures[bs:bs+batch_size], force_field, 
+          #                               num_threads=num_threads, chunksize=4,
+          #                               close_cutoff=5.0,
+          #                               far_cutoff=10.0)
+          # center_size = batch_sizes[0]
+          # for size in batch_sizes:
+          #   for k in center_size.keys():
+          #     center_size[k] = max(center_size[k], size[k])
+          # center_sizes.append(center_size)
+
+
+        return batches, center_sizes
+        # return batches, ffields, center_sizes
+
+      aligned_data, center_sizes = cluster_structs(systems, ff_and_geo_batch_size)
+      #aligned_data, aligned_amber_ff, center_sizes = cluster_structs(systems, ff_and_geo_batch_size)
+      print("[INFO] Clustering Finished, number of clusters:", len(center_sizes))
+      aligned_data = [move_dataclass(d, jnp) for d in aligned_data]
+      # print("center sizes", center_sizes)
+      # print("center size len", len(center_sizes))
+      #print("center -1 len", len(center_sizes[-1]))
+
+      #TODO: remove openmm dependency and improve performance of prmtop loader
+      aligned_amber_ff = []
+      for bs in range(0,len(systems),ff_and_geo_batch_size):
+        prm_dict_list, ff_sizes = load_ff(flist[bs:bs+ff_and_geo_batch_size])
+        ffield = align_forcefield(prm_dict_list, ff_sizes, onp.float64)
+        aligned_amber_ff.append(ffield)
+
+      #atom_types = structure.atom_types
+      #num_atoms = len(atom_types)
+      #size_dict["num_atoms"] = len(atom_mask)
+      #size_dict["periodic_image_count"] = len(structure.periodic_image_shifts)
+
+
+
+
+      # size_dicts = count_inter_list_sizes(systems, force_field, 
+      #                                   num_threads=num_threads, chunksize=4,
+      #                                   close_cutoff=5.0,
+      #                                   far_cutoff=10.0)
+      #print("Inter list size counting done")
+      #print("center sizes", center_sizes)
+
+      #sys.exit()
+
+
+      #print("size_dicts", size_dicts)
+
+      #size_dicts = center_sizes
+      #max_sizes = center_sizes[0]
+      # max_sizes = center_sizes[0]
+
+      # find largest structures in entire set to set alignment width
+      # TODO: If not doing more advanced clustering, update this to max sizes per cluster
+      #for key in max_sizes:
+      #  for size_dict in size_dicts:
+      #    max_sizes[key] = size_dict[key] if size_dict[key] > max_sizes[key] else max_sizes[key]
+
+      #print(max_sizes)
+
+      # multip = 1.5
+      # for k in DYNAMIC_INTERACTION_KEYS:
+      #   for s in center_sizes:
+      #     # assign some buffer room
+      #     s[k] = math.ceil(s[k] * multip)
+      # max_sizes = center_sizes[0]
+      for k in center_sizes[0].keys():
+        for s in center_sizes:
+          # max_sizes[k] = max(max_sizes[k], s[k])
+          #temp until interaction counting is fixed
+          if (k != 'num_atoms' and k != 'periodic_image_count'):
+            s[k] = max(s[k], 300)
+          #if k == 'filter3_size':
+          #  s[k] = 1000
+          #if k == 'filter4_size':
+          #  s[k] = 23000
+      #max_sizes = frozendict(max_sizes)
+      #print("[INFO] Interaction list sizes:")
+      #for item in max_sizes.items():
+      #    print(item)
+
+      # aligned_data = align_and_batch_structures(systems, max_sizes, batch_size=ff_and_geo_batch_size)
+      # aligned_data = [move_dataclass(d, jnp) for d in aligned_data]
+
+      # might have to do center_sizes[i] = max_sizes for 0 to len(clusters)
+      # center_sizes = [max_sizes for i in aligned_data]
+      #print("aligned_data len", len(aligned_data))
+      #print("aligned_data -1 len", len(aligned_data[-1].name))
+      #print("len center sizes", len(center_sizes))
+      #print("Max sizes", max_sizes)
+      #print("Center Sizes", center_sizes)
+      #range()len()data???
+
+      #print("[INFO] Building AMBER Parameter List")
+      # TODO: this eventually needs to be rolled into a dataclass and some work will have to be done to create a treemap
+      # for vmap compatibility, see: https://stackoverflow.com/questions/73765064/jax-vmap-over-batch-of-dataclasses
+      # the aligning done to the list structures may also serve this purpose if there isn't an underlying mechanism that works
+      #flist = build_prm_list(args.geo, args.init_FF_amber)
+      #print("Flist", flist)
+      #prm_dict_list, max_sizes = load_ff(flist)
+      # for prm in prm_dict_list:
+      #   for key, value in prm.items():
+      #     print(key, value)
+      # sys.exit()
+      
+      #aligned_amber_ff = align_forcefield(prm_dict_list, max_sizes)
+      #ff_and_geo_batch_size = 40
+
+      # aligned_amber_ff = align_and_batch_forcefield(prm_dict_list, max_sizes, ff_and_geo_batch_size)
+
+      aligned_amber_ff = [move_dataclass(d, jnp) for d in aligned_amber_ff]
+      #print("aligned ff len", len(aligned_amber_ff))
+      #print("aligned ff len -1", len(aligned_amber_ff[-1].b_k))
+      #print("type", type(aligned_amber_ff[0]))
+
+
+
+
+
+
+
+
+
+
+  ## Alternate Clustering if using AMBER EEM
+  # if(args.ff_type == 'ambereem'):
+  #   print("[INFO] Starting AMBER Optimization w/ EEM")
+
+  #   ff_and_geo_batch_size = 20
+
+  #   num_threads = os.cpu_count()
+  #   print("num_threads", num_threads)
+  #   #update this to something like
+  #   #https://stackoverflow.com/questions/76308447/how-to-use-properly-slurm-sbatch-and-python-multiprocessing
+  #   #ncpus = int(os.environ['SLURM_CPUS_PER_TASK'])
+  #   #should hopefully return the actual allocated number of cpus
+
+  #   # [globally_sorted_indices,
+  #   # all_cut_indices,
+  #   # center_sizes] = process_and_cluster_geos(systems, force_field,
+  #   #                                           max_num_clusters=args.max_num_clusters,
+  #   #                                           num_threads=num_threads,
+  #   #                                           chunksize=4,
+  #   #                                           close_cutoff=5.0, far_cutoff=10.0)
+
+  #   # print("Process and cluster done")
+
+  #   #batched alloc scheme
+  #   #find max periodic image counts and atom counts
+  #   #cluster geos by 20
+  #   #count interaction lists for each cluster in loop
+  #   #ideally only count far nbr sizes or figure out alterantive far nbr scheme
+  #   #would jax md neighbor lists work with indices passed to eem?
+  #   #center sizes = each cluster's size
+  #   def cluster_structs(structures, batch_size, dtype=jnp.float32):
+  #     full_size = len(structures)
+  #     max_sizes = {'num_atoms':0, 'periodic_image_count':0}
+  #     for struct in structures:
+  #       max_sizes['num_atoms'] = max(max_sizes['num_atoms'], len(struct.atom_types))
+  #       max_sizes['periodic_image_count'] = len(struct.periodic_image_shifts)
+  #     batches = []
+  #     center_sizes = []
+  #     for bs in range(0,abs(full_size-batch_size),batch_size):
+  #       batch = align_structures(structures[bs:bs+batch_size],
+  #                            max_sizes, dtype)
+  #       batches.append(batch)
+  #       center_sizes.append(count_inter_list_sizes(structures[bs:bs+batch_size], force_field, 
+  #                                      num_threads=num_threads, chunksize=4,
+  #                                      close_cutoff=5.0,
+  #                                      far_cutoff=10.0))
+
+  #     return batches, center_sizes
+
+  #   aligned_data = cluster_structs(systems, ff_and_geo_batch_size)
+  #   aligned_data = 
+
+  #   #atom_types = structure.atom_types
+  #   #num_atoms = len(atom_types)
+  #   #size_dict["num_atoms"] = len(atom_mask)
+  #   #size_dict["periodic_image_count"] = len(structure.periodic_image_shifts)
+
+
+
+
+  #   size_dicts = count_inter_list_sizes(systems, force_field, 
+  #                                      num_threads=num_threads, chunksize=4,
+  #                                      close_cutoff=5.0,
+  #                                      far_cutoff=10.0)
+  #   print("Inter list size counting done")
+  #   #print("center sizes", center_sizes)
+
+  #   #sys.exit()
+
+
+  #   #print("size_dicts", size_dicts)
+
+  #   #size_dicts = center_sizes
+  #   #max_sizes = center_sizes[0]
+  #   max_sizes = size_dicts[0]
+
+  #   # find largest structures in entire set to set alignment width
+  #   # TODO: If not doing more advanced clustering, update this to max sizes per cluster
+  #   #for key in max_sizes:
+  #   #  for size_dict in size_dicts:
+  #   #    max_sizes[key] = size_dict[key] if size_dict[key] > max_sizes[key] else max_sizes[key]
+
+  #   #print(max_sizes)
+
+  #   multip = 1.5
+  #   for k in DYNAMIC_INTERACTION_KEYS:
+  #     for s in size_dicts:
+  #       # assign some buffer room
+  #       s[k] = math.ceil(s[k] * multip)
+  #   max_sizes = size_dicts[0]
+  #   for k in max_sizes.keys():
+  #     for s in size_dicts:
+  #       max_sizes[k] = max(max_sizes[k], s[k])
+  #       #temp until interaction counting is fixed
+  #       if (k != 'num_atoms' and k != 'periodic_image_count'):
+  #         max_sizes[k] = max(max_sizes[k], 200)
+  #       if k == 'filter3_size':
+  #         max_sizes[k] = 1000
+  #       if k == 'filter4_size':
+  #         max_sizes[k] = 23000
+  #   #max_sizes = frozendict(max_sizes)
+  #   print("[INFO] Interaction list sizes:")
+  #   for item in max_sizes.items():
+  #       print(item)
+
+  #   aligned_data = align_and_batch_structures(systems, max_sizes, batch_size=ff_and_geo_batch_size)
+  #   aligned_data = [move_dataclass(d, jnp) for d in aligned_data]
+
+  #   # might have to do center_sizes[i] = max_sizes for 0 to len(clusters)
+  #   center_sizes = [max_sizes for i in aligned_data]
+  #   print("aligned_data len", len(aligned_data))
+  #   #print("len center sizes", len(center_sizes))
+  #   print("Max sizes", max_sizes)
+  #   print("Center Sizes", center_sizes)
+  #   #range()len()data???
+
+  #   print("[INFO] Building AMBER Parameter List")
+  #   # TODO: this eventually needs to be rolled into a dataclass and some work will have to be done to create a treemap
+  #   # for vmap compatibility, see: https://stackoverflow.com/questions/73765064/jax-vmap-over-batch-of-dataclasses
+  #   # the aligning done to the list structures may also serve this purpose if there isn't an underlying mechanism that works
+  #   flist = build_prm_list(args.geo, args.init_FF_amber)
+  #   #print("Flist", flist)
+  #   prm_dict_list, max_sizes = load_ff(flist)
+  #   # for prm in prm_dict_list:
+  #   #   for key, value in prm.items():
+  #   #     print(key, value)
+  #   # sys.exit()
+    
+  #   #aligned_amber_ff = align_forcefield(prm_dict_list, max_sizes)
+  #   #ff_and_geo_batch_size = 40
+
+  #   aligned_amber_ff = align_and_batch_forcefield(prm_dict_list, max_sizes, ff_and_geo_batch_size)
+
+  #   aligned_amber_ff = [move_dataclass(d, jnp) for d in aligned_amber_ff]
+  #   print("aligned ff len", len(aligned_amber_ff))
+  #   print("type", type(aligned_amber_ff[0]))
+
+  # if(args.ff_type == 'amber'):
+  #   num_threads = os.cpu_count()
+  #   print("SLURM CPUS PER TASK", int(os.environ['SLURM_CPUS_PER_TASK']))
+  #   [globally_sorted_indices,
+  #   all_cut_indices,
+  #   center_sizes] = process_and_cluster_geos(systems, force_field,
+  #                                             max_num_clusters=args.max_num_clusters,
+  #                                             num_threads=num_threads,
+  #                                             chunksize=4,
+  #                                             close_cutoff=5.0, far_cutoff=10.0)
+  #   for i in range(len(center_sizes)):
+  #       for k in center_sizes[i].keys():
+  #           if k in DYNAMIC_INTERACTION_KEYS:
+  #             multip = 1.5
+  #             # give extra buffer room if we need to e. minim
+  #             if (k in ['filter3_size', 'filter4_size']
+  #                 and args.num_e_minim_steps > 0):
+  #               multip = 2.0
+  #             center_sizes[i][k] = math.ceil(multip * center_sizes[i][k])
+  #             if (k != 'num_atoms' and k != 'periodic_image_count'):
+  #               center_sizes[i][k] = max(center_sizes[i][k], 200)
+  #             if k == 'far_nbr_size':
+  #               center_sizes[i][k] = 300
+  #             if k == 'filter3_size':
+  #               center_sizes[i][k] = 1000
+  #             if k == 'filter4_size':
+  #               center_sizes[i][k] = 23000
+  #           if center_sizes[i][k] == 0:
+  #               center_sizes[i][k] = 1
+  #   for i in range(len(center_sizes)):
+  #     for item in center_sizes[i].items():
+  #       print(item)
+
+  #   aligned_data = []
+  #   for i in range(len(center_sizes)):
+  #       zz = align_structures([systems[i] for i in all_cut_indices[i]], center_sizes[i], TYPE)
+  #       zz = move_dataclass(zz, jnp)
+  #       aligned_data.append(zz)
+
+  #   print("[INFO] Building AMBER Parameter List")
+  #   flist = build_prm_list(args.geo, args.init_FF_amber)
+  #   #prm_dict_list, max_sizes = load_ff(flist)
+  #   aligned_amber_ff = []
+  #   for i in range(len(center_sizes)):
+  #     zz, max_size = load_ff([flist[i] for i in all_cut_indices[i]])
+  #     zz = align_forcefield(zz, max_size)
+  #     zz = move_dataclass(zz, jnp)
+  #     aligned_amber_ff.append(zz)
+
+
+  # else:
+  # ###########################################################################
+  #   num_threads = os.cpu_count()
+  #   [globally_sorted_indices,
+  #   all_cut_indices,
+  #   center_sizes] = process_and_cluster_geos(systems, force_field,
+  #                                             max_num_clusters=args.max_num_clusters,
+  #                                             num_threads=num_threads,
+  #                                             chunksize=4,
+  #                                             close_cutoff=5.0, far_cutoff=10.0)
+  #   for i in range(len(center_sizes)):
+  #       for k in center_sizes[i].keys():
+  #           if k in DYNAMIC_INTERACTION_KEYS:
+  #             multip = 1.5
+  #             # give extra buffer room if we need to e. minim
+  #             if (k in ['filter3_size', 'filter4_size']
+  #                 and args.num_e_minim_steps > 0):
+  #               multip = 2.0
+  #             center_sizes[i][k] = math.ceil(multip * center_sizes[i][k])
+  #           if center_sizes[i][k] == 0:
+  #               center_sizes[i][k] = 1
+
+  #   aligned_data = []
+  #   for i in range(len(center_sizes)):
+  #       zz = align_structures([systems[i] for i in all_cut_indices[i]], center_sizes[i], TYPE)
+  #       zz = move_dataclass(zz, jnp)
+  #       aligned_data.append(zz)
 
   force_field = move_dataclass(force_field, jnp)
 
-  batched_allocate = reaxff_interaction_list_generator(force_field,
+  
+
+  batched_allocate, batched_allocate_amber = reaxff_interaction_list_generator(force_field,
                                                        close_cutoff = 5.0,
                                                        far_cutoff = 10.0,
                                                        use_hbond=True)
+  
+  #alternative far nbr generation
+  # displacement_fn, shift_fn = jax_md.space.periodic(50.0)
+  # neighbor_fn2 = jax_md.partition.neighbor_list(displacement_fn,
+  #                                 box=50.0,
+  #                                 r_cutoff=10.0,
+  #                                 dr_threshold=0.5,
+  #                                 capacity_multiplier=1.2,
+  #                                 format=jax_md.partition.Dense)
 
-  allocate_func = jax.jit(batched_allocate,static_argnums=(3,))
+  if(args.ff_type == 'ambereem'):
+    allocate_func = jax.jit(batched_allocate_amber,static_argnums=(3,))
+    # allocate_func = neighbor_fn2.allocate
+  else:
+    allocate_func = jax.jit(batched_allocate,static_argnums=(3,))
   center_sizes = [frozendict(c) for c in center_sizes]
 
   list_positions = [s.positions for s in aligned_data]
@@ -380,6 +801,28 @@ def main():
   # loss_and_grad_func = jax.value_and_grad(calculate_loss)
   # loss_func = calculate_loss
 
+  # for i in range(len(aligned_data)):
+  #   sub_nbr, counts, overflow = batched_allocate_amber(list_positions[i], aligned_data[i],
+  #                                  force_field, center_sizes[i])
+  #   inds = sub_nbr[0]
+  #   print("sub nbr len", inds.shape)
+  #   print("inds 1", inds[0])
+  #   print("counts", counts)
+
+  # inds 1 [[ 1  2  3 ... 23 23 23]
+  # [ 0  2  3 ... 23 23 23]
+  # [ 0  1  3 ... 23 23 23]
+  # ...
+  # [ 0  1  2 ... 23 23 23]
+  # [ 0  1  2 ... 23 23 23]
+  # [ 0  1  2 ... 23 23 23]]
+
+
+  # nbs = jnp.array([neighbor_fn2.allocate(pos).idx for pos in list_positions[0]])
+  # print("nbs shape", nbs.shape)
+
+  # sys.exit()
+  
 
   # #aligned_data
   # #aligned_amber_forcefield

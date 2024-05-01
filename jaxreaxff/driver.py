@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as onp
 import time
 import argparse
-from .smartformatter import SmartFormatter
+from jaxreaxff.smartformatter import SmartFormatter
 from frozendict import frozendict
 from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
 from jax_md.reaxff.reaxff_forcefield import ForceField

@@ -151,7 +151,8 @@ def align_structures(structures, max_sizes, dtype=onp.float32):
 def align_and_batch_structures(structures, max_sizes, batch_size, dtype=onp.float32):
   full_size = len(structures)
   batches = []
-  for bs in range(0,full_size-batch_size,batch_size):
+  #for bs in range(0,abs(full_size-batch_size),batch_size):
+  for bs in range(0,abs(full_size-batch_size),batch_size):
     batch = align_structures(structures[bs:bs+batch_size],
                              max_sizes, dtype)
     batches.append(batch)

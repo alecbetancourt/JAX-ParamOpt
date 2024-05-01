@@ -615,5 +615,35 @@ def reaxff_interaction_list_generator(force_field,
                                       overflow_flags)
 
     return inter_lists,new_counts
+  
+  #TODO: add proper neighbor list intergration if necessary
+  def batched_allocate_amber(positions, structures, force_field, prev_counts=None):
+    vec_calc_dense_nbr_size = jax.vmap(calculate_dense_nbr_size,
+                                       in_axes=(0,None))
+    vec_create_dense_nbr = jax.vmap(create_dense_nbr_list,
+                                       in_axes=(0, 0, None, None))
+    dist_mats = jax.vmap(create_distance_matrices)(positions, structures)
+    did_overflow = False
+    batch_size = len(dist_mats)
 
-  return batched_allocate
+    # calculate the far neighbor size and compare it with the previous one
+    far_nbr_sizes = vec_calc_dense_nbr_size(dist_mats,
+                                            far_cutoff)
+    new_max_far_size = jnp.max(far_nbr_sizes)
+    new_counts = {}
+    new_counts['far_nbr_size'] = new_max_far_size
+
+    max_far_size = prev_counts['far_nbr_size']
+    did_overflow = did_overflow | (new_max_far_size > max_far_size)
+    # generate far neighbor interaction list
+    [far_nbr_inds,
+     far_nbr_shifts,
+     far_dists] = vec_create_dense_nbr(structures,
+                                        dist_mats,
+                                        max_far_size,
+                                        far_cutoff)
+    #  far_nbr_list = NeighborList(far_nbr_inds, far_nbr_shifts,
+    #                             jnp.zeros(shape=batch_size, dtype=jnp.bool_))
+    return (far_nbr_inds, far_nbr_shifts, far_dists), new_counts, did_overflow
+
+  return batched_allocate, batched_allocate_amber

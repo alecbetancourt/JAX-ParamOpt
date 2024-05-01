@@ -27,6 +27,7 @@ import os
 import logging
 import math
 from jaxreaxff.interactions import DYNAMIC_INTERACTION_KEYS
+from jax_md.space import map_neighbor
 
 rdndgr = 180.0/onp.pi
 dgrrdn = 1.0/rdndgr
@@ -62,6 +63,8 @@ def amber_eem_energy(pos,
   #(charges, pairs, pairs14, scee)
   pos = pos/10
 
+  #print("amber prms", amberPrms)
+
   bprm = (amberPrms.b_k, amberPrms.b_l, amberPrms.b_1_idx, amberPrms.b_2_idx, amberPrms.b_prm_idx)
   aprm = (amberPrms.a_k, amberPrms.a_eq_ang, amberPrms.a_1_idx, amberPrms.a_2_idx, amberPrms.a_3_idx, amberPrms.a_prm_idx)
   tprm = (amberPrms.t_k, amberPrms.t_phase, amberPrms.t_period, amberPrms.t_1_idx, amberPrms.t_2_idx
@@ -73,7 +76,7 @@ def amber_eem_energy(pos,
   # call eem routine to generate charges
   N = len(species)
   atom_mask = species >= 0
-  far_nbr_inds = nbr_lists.far_nbrs.idx
+  far_nbr_inds = nbr_lists
   far_neigh_types = species[far_nbr_inds]
   far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
                                         & atom_mask[far_nbr_inds])
@@ -102,9 +105,15 @@ def amber_eem_energy(pos,
                                     tol,
                                     max_solver_iter)
   
+  #jax.debug.print("EEM Charges {charges}", charges=charges)
+  #jax.debug.callback the charges to a log file to then analyze
+  
   # print("Charges EEM", charges)
   
   original_chgs, pairs, pairs14, scee = cprm
+
+  #print("len og chgs", len(original_chgs))
+  #print("len chgs", len(charges))
 
   # TODO: spurious charge appearing in last (masked) position in structure
   # figure out if this has an impact on the gradient and potentially
@@ -135,33 +144,34 @@ def amber_eem_energy(pos,
   totalE += amber.bond_get_energy(pos, boxVectors, bprm)
   # bond_grad_fn = jax.grad(amber.bond_get_energy)
   # print("Bond Grad", bond_grad_fn(pos, boxVectors, bprm))
-  # print("Bond E", amber.bond_get_energy(pos, boxVectors, bprm))
+  #print("Bond E", amber.bond_get_energy(pos, boxVectors, bprm))
   totalE += amber.angle_get_energy(pos, boxVectors, aprm)
   # angle_grad_fn = jax.grad(amber.angle_get_energy)
   # print("Angle Grad", angle_grad_fn(pos, boxVectors, aprm))
-  # print("Angle E", amber.angle_get_energy(pos, boxVectors, aprm))
+  #print("Angle E", amber.angle_get_energy(pos, boxVectors, aprm))
   totalE += amber.torsion_get_energy(pos, boxVectors, tprm)
   # torsion_grad_fn = jax.grad(amber.torsion_get_energy)
   # print("Torsion Grad", torsion_grad_fn(pos, boxVectors, tprm))
-  # print("Torsion E", amber.torsion_get_energy(pos, boxVectors, tprm))
+  #print("Torsion E", amber.torsion_get_energy(pos, boxVectors, tprm))
   #sys.exit()
   totalE += amber.lj_get_energy(pos, boxVectors, lprm)
   # lj_grad_fn = jax.grad(amber.lj_get_energy)
   # print("LJ Grad", lj_grad_fn(pos, boxVectors, lprm))
-  # print("LJ E", amber.lj_get_energy(pos, boxVectors, lprm))
+  #print("LJ E", amber.lj_get_energy(pos, boxVectors, lprm))
   #sys.exit()
   totalE += amber.coul_get_energy(pos, boxVectors, cprm)
   # coul_grad_fn = jax.grad(amber.coul_get_energy)
   # print("Coul Grad", coul_grad_fn(pos, boxVectors, cprm))
-  # print("Coul E", amber.coul_get_energy(pos, boxVectors, cprm))
+  #print("Coul E", amber.coul_get_energy(pos, boxVectors, cprm))
   # sys.exit()
   #print("Positions", pos)
   # sys.exit()
-  # print("Total E", totalE)
-  # sys.exit()
+  #print("Total E", totalE)
+  #sys.exit()
+  #jax.debug.print("Total E {totalE}", totalE=totalE)
 
   # return energy and charges to preserve modularity with existing reaxff code
-  return totalE, charges
+  return totalE/4.184, charges
 
 def calculate_bond_restraint_energy(positions, structure):
   '''
@@ -280,6 +290,16 @@ def calculate_torsion_restraint_energy(positions, structure):
   rest_pot = jnp.sum(mask * f1s * (1.0 - jnp.exp(-f2s * (diff)**2)))
   return rest_pot
 
+def calculate_far_dists(positions, structure, far_nbr_inds, far_nbr_shifts):
+  calc_dist = map_neighbor(lambda x,y: calculate_dist(x - y))
+  R = positions
+  shifts = structure.periodic_image_shifts
+  orth_matrix = structure.orth_matrix
+  shift_pos = jnp.dot(orth_matrix,shifts.transpose()).transpose()
+  #R_far_nbr = R[far_nbr_inds,:] + shift_pos[far_nbr_shifts]
+  R_far_nbr = R[far_nbr_inds,:]
+  far_nbr_dists = calc_dist(R, R_far_nbr)
+  return far_nbr_dists
 
 def calculate_energy_and_charges(positions,
                                  structure,
@@ -295,13 +315,17 @@ def calculate_energy_and_charges(positions,
   force_field = ForceField.fill_off_diag(force_field)
   force_field = ForceField.fill_symm(force_field)
 
-  dists_and_angles = calculate_dist_and_angles(positions,
-                                                structure,
-                                                nbr_lists)
+  # dists_and_angles = calculate_dist_and_angles(positions,
+  #                                               structure,
+  #                                               nbr_lists)
 
   #TODO: Figure out if this causes double evaluation of the energy function in jit
   #{'reaxff':0, 'amber':1, 'ambereem':2}
   if ff_type_int == 0:
+    dists_and_angles = calculate_dist_and_angles(positions,
+                                                structure,
+                                                nbr_lists)
+    #print("Reax Energy Eval")
     energy, charges =  calculate_reaxff_energy(structure.atom_types,
                                 structure.atomic_nums,
                                 nbr_lists,
@@ -314,13 +338,26 @@ def calculate_energy_and_charges(positions,
                                 solver_model = "EEM",
                                 max_solver_iter=-1)
   if ff_type_int == 2:
+    # (close_nbr_dists,
+    #       far_nbr_dists,
+    #       body_3_angles,
+    #       body_4_angles,
+    #       hb_ang_dist)
+
+    far_nbr_inds, far_nbr_shifts, far_dists = nbr_lists
+
+    far_dists = calculate_far_dists(positions, structure, far_nbr_inds, far_nbr_shifts)
+
+    dists_and_angles = (None,far_dists,None,None,None)
+    #print("Amber Energy Eval")
     # TODO: Fix when ortho box conversion is fixed
     boxVectors = onp.array([999.9,999.9,999.9])
     energy, charges = amber_eem_energy(positions,
                      boxVectors,
                      amberPrms,
                      structure.atom_types,
-                     nbr_lists,
+                     #nbr_lists,
+                     far_nbr_inds,
                      *dists_and_angles,
                      force_field,
                      init_charges=None,
@@ -465,7 +502,7 @@ def calculate_loss(force_field,
                                                 list_structure[i],
                                                 list_nbr_lists[i],
                                                 force_field,
-                                                amberPrms,
+                                                amberPrms[i],
                                                 ff_type_int)
       all_forces = all_forces.at[list_structure[i].name,
                                  :atom_counts[i],
@@ -476,11 +513,13 @@ def calculate_loss(force_field,
                                 list_structure[i],
                                 list_nbr_lists[i],
                                 force_field,
-                                amberPrms,
+                                amberPrms[i],
                                 ff_type_int)
     # print("charges post vmap", charges)
     # print("charges post shape", charges.shape)
     #print("nrg post vmap", energy)
+    #print("forces loss eval", forces)
+
     # print("nrg post shape", energy.shape)
     # print("atm count i", atom_counts[i])
     charges = charges[:, :atom_counts[i]]
@@ -683,31 +722,58 @@ def energy_minimize(list_structure,
   for iter_c in range(minim_steps):
     for i in range(len(center_sizes)):
       if len(list_sub_structure[i].energy_minimize) > 0 and jnp.any(LRs[i] > 0):
-        sub_nbr, counts = allocate_func(list_sub_cur_pos[i],
-                                        list_sub_structure[i],
-                                        force_field, cur_center_sizes[i])
-        if jnp.any(sub_nbr.did_buffer_overflow):
-          print(f"Interaction list overflow for cluster-{i+1} during energy minimization at step {iter_c + 1}!")
-          new_cluster_center = update_inter_sizes(list_sub_cur_pos[i],
-                                                   list_sub_structure[i],
-                                                   force_field,
-                                                   cur_center_sizes[i],
-                                                   multip=1.5)
-          print("name: old size -> new size")
-          for k in counts.keys():
-            #if cur_center_sizes[i][k] != new_cluster_center[k]:
-            print(f"{k}: {cur_center_sizes[i][k]}->{new_cluster_center[k]}")           
-          cur_center_sizes[i] = new_cluster_center
-          # repopulate the neighbor list since the other one is invalidated
-          sub_nbr = allocate_func(list_sub_cur_pos[i],
+        #TODO: Remove this and make dummy nbr list class
+        #this class should be transparently compatible with the other approach
+        #minux the interaction size update which should be toggled
+        if ff_type_int == 2:
+          sub_nbr, counts, did_overflow = allocate_func(list_sub_cur_pos[i],
                                           list_sub_structure[i],
-                                          force_field, cur_center_sizes[i])[0]
-          
+                                          force_field, cur_center_sizes[i])
+          #print("Far NBR alloc size", counts['far_nbr_size'])
+          if jnp.any(did_overflow):
+            print("Far Nbr Counts overflow count:", counts['far_nbr_size'])
+
+          # print("sub shape",list_sub_cur_pos[i].shape)
+          # sub_nbr = [allocate_func(pos).idx for pos in list_sub_cur_pos[i]]
+          # print("alloc 1 shape", len(sub_nbr[0]))
+          # print("sub align shape", sub_nbr.shape)
+          # print("atm types", list_sub_structure[i].atom_types)
+          # sub_nbr = (sub_nbr, None, None)
+
+        else:
+          sub_nbr, counts = allocate_func(list_sub_cur_pos[i],
+                                          list_sub_structure[i],
+                                          force_field, cur_center_sizes[i])
+          print("Center Sizes pre min", cur_center_sizes[i])
+          print("Center Sizes", cur_center_sizes[i])
+          print("Filter 3 counts", counts['filter3_size'])
+          print("Counts Pre Update", counts)
+          # TODO: fix this when interaction list counting is fixed
+          if jnp.any(sub_nbr.did_buffer_overflow):
+            print(f"Interaction list overflow for cluster-{i+1} during energy minimization at step {iter_c + 1}!")
+            new_cluster_center = update_inter_sizes(list_sub_cur_pos[i],
+                                                    list_sub_structure[i],
+                                                    force_field,
+                                                    cur_center_sizes[i],
+                                                    multip=1.5)
+            print("name: old size -> new size")
+            for k in counts.keys():
+              #if cur_center_sizes[i][k] != new_cluster_center[k]:
+              print(f"{k}: {cur_center_sizes[i][k]}->{new_cluster_center[k]}")           
+            cur_center_sizes[i] = new_cluster_center
+            #print("Update Center Sizes", cur_center_sizes[i])
+            #sys.exit()
+            # repopulate the neighbor list since the other one is invalidated
+            sub_nbr = allocate_func(list_sub_cur_pos[i],
+                                            list_sub_structure[i],
+                                            force_field, cur_center_sizes[i])[0]
+            
+        #jax.debug.print("Minimization Energies")
         (energy, ch), grads = force_func(list_sub_cur_pos[i],
                                  list_sub_structure[i],
                                  sub_nbr,
                                  force_field,
-                                 amberPrms,
+                                 amberPrms[i],
                                  ff_type_int)
         #print("Minimization Energy", energy)
         #print("len shape", len(list_sub_cur_pos[i]))
@@ -731,6 +797,15 @@ def energy_minimize(list_structure,
                                                         LRs[i])
         list_prev_energy[i] = energy
     cur_total_loss = sum(cur_loss_vals)
+  
+  # (energy, ch), grads = force_func(list_sub_cur_pos[0],
+  #                                list_sub_structure[0],
+  #                                sub_nbr,
+  #                                force_field,
+  #                                amberPrms[0],
+  #                                ff_type_int)
+  #jax.debug.print("Minimization Energy {energy}", energy=energy)
+  
   # update the positions
   for i in range(len(list_pos)):
     if len(list_sub_structure[i].energy_minimize) > 0:
