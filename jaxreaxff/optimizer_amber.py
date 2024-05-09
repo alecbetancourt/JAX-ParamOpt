@@ -8,7 +8,13 @@ import matplotlib.pyplot as plt
 import jax_md.amber.amber_energy as amber
 #import parmed as pmd
 import openmm as omm
+import openmm.app as app
 jax.config.update("jax_enable_x64", True)
+import argparse
+from jaxreaxff.smartformatter import SmartFormatter
+
+from parmedmod import UpdateParmTopCLI
+
 
 # make global array for loss
 losses = []
@@ -51,7 +57,7 @@ def extractCoordinates(flist):
 
     return coordinates
 
-def constrained_minimization_vec(crds, prmtop, boxVectors):
+def constrained_minimization_vec(crds, prmtop, boxVectors, min_steps, torsions, min_interval):
     radian_to_degree = 180.0/jnp.pi
     degree_to_radian = 1.0/radian_to_degree
     bondprm = amber.bond_init(prmtop._prmtop)
@@ -63,9 +69,9 @@ def constrained_minimization_vec(crds, prmtop, boxVectors):
     # restraint format:
     # p1,p2,p3,p4,resangle(radians),frc1,frc2
     # default frc1/frc2 values - 1000.0/0.25
-    frc1 = 1000
-    frc2 = 0.1
-    t = [6,7,9,11]
+    # frc1 = 1000
+    # frc2 = .25
+    # t = [6,7,9,11]
 
     def energy_fn(pos, prms=None, restraint=None):
         bprm, aprm, tprm, lprm, cprm, = prms
@@ -100,9 +106,8 @@ def constrained_minimization_vec(crds, prmtop, boxVectors):
         #return (state, nbpairs)
         return state, restraint, prms
 
-    iter = 2000
     inner = 100
-    outer = int(iter/inner)
+    outer = int(min_steps/inner)
 
     initial_torsions = []
     actual_torsions = []
@@ -117,14 +122,14 @@ def constrained_minimization_vec(crds, prmtop, boxVectors):
     global iteration
     iteration = iteration + 1
 
-    if iteration % 5 == 0:
-        print("Minimization Start")
-        #vmap instead of naive loop
+    if iteration % min_interval == 0:
+        print("Minimization Run")
+        # vmap instead of naive loop
         target_angle = jnp.array([i for i in range(36)])
         crds = jnp.array(crds)
-        batch_inner = jax.vmap(min_inner, in_axes=(0, 0, None, None, None, None, None, None, None), out_axes=(0,0,0))
+        batch_inner = jax.vmap(min_inner, in_axes=(0, 0, None, None, None, None, None, None, None, None), out_axes=(0,0,0))
 
-        energies, post_positions, actual_torsions = batch_inner(crds, target_angle, energy_fn_no_restraint, energy_fn, init_fn, body_fn, masses, boxVectors, prms)
+        energies, post_positions, actual_torsions = batch_inner(crds, target_angle, energy_fn_no_restraint, energy_fn, init_fn, body_fn, masses, boxVectors, prms, torsions)
 
         deviation = []
         for i, j in enumerate(actual_torsions):
@@ -137,17 +142,14 @@ def constrained_minimization_vec(crds, prmtop, boxVectors):
         post_positions = crds
         energies = jnp.array([energy_fn_no_restraint(p, prms=prms) for p in crds])
 
-    # global iteration
-    # iteration = iteration + 1
-
     return energies, post_positions
 
-def min_inner(crds, target, energy_fn_no_restraint, energy_fn, init_fn, body_fn, masses, boxVectors, prms):
+def min_inner(crds, target, energy_fn_no_restraint, energy_fn, init_fn, body_fn, masses, boxVectors, prms, torsions):
     radian_to_degree = 180.0/jnp.pi
     degree_to_radian = 1.0/radian_to_degree
     frc1 = 1000
     frc2 = 0.1
-    t = [7,9,10,15]
+    t = torsions[0]
 
     target_angle = target * 10 * degree_to_radian
     curr_rest = [t[0],t[1],t[2],t[3], target_angle, frc1, frc2]
@@ -191,44 +193,12 @@ def gradObj(scipy_params, *args):
     
     prms = prms_pre
 
-    ##              [ 6,  7,  9, 13, 13],
-    ##              [ 8,  7,  9, 13, 16],
-    ##
-    ##              [ 6,  7,  9, 11, 11],
-    ##              [ 6,  7,  9, 10, 12],
-    ##              [ 8,  7,  9, 10, 14],
-    ##              [ 8,  7,  9, 11, 15],
-
     i = 0
     for idx in torsions[:, 4]:
         prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][idx] = scipy_params[i]
         prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][idx] = scipy_params[i+1]
         prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][idx] = scipy_params[i+2]
         i = i + 3
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][13] = scipy_params[0]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][13] = scipy_params[1]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][13] = scipy_params[2]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][16] = scipy_params[3]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][16] = scipy_params[4]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][16] = scipy_params[5]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][11] = scipy_params[6]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][11] = scipy_params[7]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][11] = scipy_params[8]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][12] = scipy_params[9]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][12] = scipy_params[10]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][12] = scipy_params[11]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][14] = scipy_params[12]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][14] = scipy_params[13]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][14] = scipy_params[14]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][15] = scipy_params[15]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][15] = scipy_params[16]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][15] = scipy_params[17]
 
     bondprm = amber.bond_init(prms._prmtop)
     angleprm = amber.angle_init(prms._prmtop)
@@ -263,12 +233,11 @@ def gradObj(scipy_params, *args):
 def ObjectiveFunction(scipy_params, *args):
     print("Iteration:", iteration+1)
 
-    crds, boxVectors, ref_ene, params_dict, optvars_dict, prms, torsions = args
-    #crds, boxVectors, ref_ene, params_dict, optvars_dict, prms=args
+    crds, boxVectors, ref_ene, params_dict, optvars_dict, prms, torsions, min_steps, outdir, prmtop_dir, min_interval = args
 
-    print("Parameter Guess:", scipy_params)
+    print("Updated Parameters:", scipy_params)
 
-    #set new parameters
+    # set new parameters
     # i=0
     # for key, value in params_dict.items():
     #     if(optvars_dict['height']):
@@ -290,14 +259,8 @@ def ObjectiveFunction(scipy_params, *args):
     #     if(optvars_dict['scnb']):
     #         value['scnb']=scipy_params[i]
     #         i+=1
-            
-    ##              [ 6,  7,  9, 13, 13],
-    ##              [ 8,  7,  9, 13, 16],
-    ##
-    ##              [ 6,  7,  9, 11, 11],
-    ##              [ 6,  7,  9, 10, 12],
-    ##              [ 8,  7,  9, 10, 14],
-    ##              [ 8,  7,  9, 11, 15],
+
+    # UpdateParmTopCLI(prmtop_dir, params_dict)
 
     i = 0
     for idx in torsions[:, 4]:
@@ -306,32 +269,7 @@ def ObjectiveFunction(scipy_params, *args):
         prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][idx] = scipy_params[i+2]
         i = i + 3
 
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][13] = scipy_params[0]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][13] = scipy_params[1]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][13] = scipy_params[2]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][16] = scipy_params[3]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][16] = scipy_params[4]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][16] = scipy_params[5]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][11] = scipy_params[6]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][11] = scipy_params[7]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][11] = scipy_params[8]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][12] = scipy_params[9]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][12] = scipy_params[10]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][12] = scipy_params[11]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][14] = scipy_params[12]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][14] = scipy_params[13]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][14] = scipy_params[14]
-
-    # prms._prmtop._raw_data['DIHEDRAL_FORCE_CONSTANT'][15] = scipy_params[15]
-    # prms._prmtop._raw_data['SCEE_SCALE_FACTOR'][15] = scipy_params[16]
-    # prms._prmtop._raw_data['SCNB_SCALE_FACTOR'][15] = scipy_params[17]
-
-    ene_list, post_positions = constrained_minimization_vec(crds, prms, boxVectors)
+    ene_list, post_positions = constrained_minimization_vec(crds, prms, boxVectors, min_steps, torsions, min_interval)
 
     loss_and_grad_fn = jax.value_and_grad(gradObj)
     loss_and_grad = loss_and_grad_fn(scipy_params, crds, boxVectors, ref_ene, post_positions, prms, torsions)
@@ -339,66 +277,41 @@ def ObjectiveFunction(scipy_params, *args):
     loss, grad = loss_and_grad
     grad = grad.astype('float64')
     print("Loss", loss)
-    print("Loss Gradient", grad)
     losses.append(loss)
+    print("Loss Grad", grad)
 
     min_ene = min(ene_list)
     relative_ene_list = [(x - min_ene) for x in ene_list]
 
-    # plt.plot(range(0,360,10), ref_ene, marker='o', label="Pre Optimization")
-    # plt.plot(range(0,360,10), relative_ene_list, marker='o', label="Post Optimization")
-    # plt.title("dh_6-7-9-11 JAX-AMBER Fitting")
-    # plt.xlabel("Dihedral (Degree)")
-    # #should this be kj/mol?
-    # plt.ylabel("Potential Energy (kcal/mol)")
-    # plt.legend()
-    # plt.savefig("./test_optimizer_output/iteration_%s.png" % iteration)
-    # plt.close()
+    plt.plot(range(0,360,10), ref_ene, marker='o', label="Reference Energies")
+    plt.plot(range(0,360,10), relative_ene_list, marker='o', label="Post Optimization")
+    plt.title("JAX-AMBER Fitting Iteration %s" % iteration)
+    plt.xlabel("Dihedral (Degree)")
+    plt.ylabel("Potential Energy (kcal/mol)")
+    plt.legend()
+    plt.savefig(outdir + "/iteration_%s.png" % iteration)
+    plt.close()
 
     # scipy requires jac gradient as list
     return loss, list(grad)
 
-def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, opt_interval, ref_ene, torsions):
-    # Usage:
-    # ./jaxreaxff/driver_v3.py --init_FF ./Datasets/amber/dh_6-7-9-11/prmtop    \
-    #           --params ./Datasets/amber/dh_6-7-9-11/params.json              \
-    #           --geo ./Datasets/amber/dh_6-7-9-11/confs_999-999/dh_6-7-9-11_  \
-    #           --num_e_minim_steps 2000                                       \
-    #           --num_trials 1                                                 \
-    #           --num_steps 5                                                  \
-    #           --ref_ene ./Datasets/amber/ref_ene.json                        \
-    #           --torsions ./Datasets/amber/torsions.json                       
-
+def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, ref_ene, outdir, min_interval):
     initial_guess='initial_guess'
-    #ref_ene=[0.0,0.24041407495730027,0.7180356999677429,1.523482149935944,2.3976774999388795,3.2420603249764213,3.9534696249666013,4.270306924982776,4.275803824991726,4.150128124955188,3.7827582499446066,3.668954849980821,3.443494099972213,3.341964599971732,3.356309249936942,3.4091008249399124,3.5792474499419313,3.9089673249762313,4.470510800001648,5.026563649951754,5.4152183249399855,5.627595699985193,5.775955524968026,5.81154104994738,5.6101888499449615,5.361052524988281,4.971136574998241,4.523440424971454,3.9399093499815763,3.2612116249737255,2.5247650749540185,1.8916175749831154,1.1293870499835634,0.5700021749584039,0.16918654995379256,0.029498775001854938]
     algorithm='L-BFGS-B'
-    maxiter=1000
+    # maxiter=1000
     step_size=0.100000
 
-    crd_flist=[geo_dir + '%03d' % (i) + '.xyz' for i in range(36)]
+    crd_flist=[geo_dir + '_%03d' % (i) + '.xyz' for i in range(36)]
 
     #list of 36 (35,3) numpy arrays from 0-350 deg
     coordinates = extractCoordinates(crd_flist)
 
-    prmtopomm = omm.app.AmberPrmtopFile(prmtop_dir)
-
     params_dict=ReadJsonData(params_dir)[initial_guess]
-
-    print("Params Dict", params_dict)
-
     optvars_dict=ReadJsonData(params_dir)['optvars']
-
-    print("Opt Vars", optvars_dict)
-
     bounds_dict=ReadJsonData(params_dir)['bounds']
-
-    print("Bounds", bounds_dict)
     
     guess=list()
     bounds=list()
-
-    torsions = jnp.array(ReadJsonData(torsions)['torsions'])
-    ref_ene = jnp.array(ReadJsonData(ref_ene)['ref_ene'])
 
     for key, value in params_dict.items():
         if(optvars_dict['height']):
@@ -421,14 +334,141 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, opt_interval, 
             guess.append(value['scnb'])
             bounds.append(bounds_dict['scnb'])
 
-    system = prmtopomm.createSystem(nonbondedMethod=omm.app.NoCutoff, removeCMMotion=False, constraints=None)
-    boxVectors = jnp.array([v._value for v in system.getDefaultPeriodicBoxVectors()])
-    boxVectors = boxVectors.sum(axis=0)
+    # Make initial FF modifications using parmed
+    # UpdateParmTopCLI(prmtop_dir, params_dict)
+
+    prmtopomm = app.AmberPrmtopFile(prmtop_dir)
+
+    # Grab all indices of torsions from the params file
+    torsions = [list(map(int, torsion.split("-"))) for torsion in params_dict.keys()]
+    ref_ene = jnp.array(ReadJsonData(ref_ene)['ref_ene'])
+    print("Torsion Indices from parameter file:", torsions)
+
+    # Use regular numpy to prevent tracing to make this easier
+    torsionidx = prmtopomm._prmtop._raw_data["DIHEDRALS_INC_HYDROGEN"] + prmtopomm._prmtop._raw_data["DIHEDRALS_WITHOUT_HYDROGEN"]
+    torsionidx = np.array([int(index) for index in torsionidx]).reshape((-1,5))
+    torsionidx[:, :4] = torsionidx[:, :4]//3
+    torsionidx[:, 4] = torsionidx[:, 4]-1
+    print("All Torsion Indices:", torsionidx)
+
+    # Find the actual parameter index in the prmtop file using the atom numbers for the torsion
+    torsion_indices = []
+    torsion_idx_list = torsionidx.tolist()
+    for torsion in torsions:
+        for torsion_idx in torsion_idx_list:
+            if torsion == torsion_idx[:4]:
+                torsion_indices.append(torsion_idx)
+
+    torsion_indices = jnp.array(torsion_indices)
+
+    print("Selected Torsion & Parameter Indices:")
+    print(torsion_indices)
+
+    print("Torsion to be constrained:", torsions[0][:4])
+
+    # sys.exit()
+
+    #system = prmtopomm.createSystem(nonbondedMethod=app.NoCutoff, removeCMMotion=False, constraints=None)
+    #boxVectors = jnp.array([v._value for v in system.getDefaultPeriodicBoxVectors()])
+    #boxVectors = boxVectors.sum(axis=0)
+    boxVectors = jnp.array([100.0, 100.0, 100.0])
     
     minimization_result=minimize(ObjectiveFunction, guess, jac=True, \
-           args=(coordinates, boxVectors, ref_ene, params_dict, optvars_dict, prmtopomm, torsions), \
+           args=(coordinates, boxVectors, ref_ene, params_dict, optvars_dict, prmtopomm, torsion_indices, min_steps, outdir, prmtop_dir, min_interval), \
            bounds=bounds, method=algorithm, options={'maxiter':opt_loops, 'eps': step_size})
 
     print("Losses:", losses)
 
+    print("Final Params: ", minimization_result.x)
+
+    print("Termination Message: ", minimization_result.message)
+
+    x = minimization_result.x
+
+    # Set final parameters in dictionary and save
+    i=0
+    for key, value in params_dict.items():
+        if(optvars_dict['height']):
+            value['height']=x[i]
+            i+=1
+
+        if(optvars_dict['phase']):
+            value['phase']=x[i]
+            i+=1
+
+        if(optvars_dict['periodicity']):
+            value['periodicity']=x[i]
+            i+=1
+
+        if(optvars_dict['scee']):
+            value['scee']=x[i]
+            i+=1
+
+        if(optvars_dict['scnb']):
+            value['scnb']=x[i]
+            i+=1
+    
+    # SaveJsonData(params_dict, outdir + '/final_params.json')
+
     return
+
+def main():
+    # create parser for command-line arguments
+    parser = argparse.ArgumentParser(description='AMBER Torsion Optimizer',
+                                   formatter_class=SmartFormatter)
+  
+    parser.add_argument('--prmtop', metavar='filename',
+      type=str,
+      default="../Datasets/amber/dh_6-7-9-11/prmtop",
+      help='Location of PRMTOP file')
+    parser.add_argument('--params', metavar='filename',
+      type=str,
+      default="../Datasets/amber/dh_6-7-9-11/params.json",
+      help='Parameters file')
+    parser.add_argument('--geo', metavar='filename',
+      type=str,
+      default="../Datasets/amber/dh_6-7-9-11/confs_999-999/dh_6-7-9-11/dh_6-7-9-11",
+      help='Directory with geometry files')
+    parser.add_argument('--reference', metavar='filename',
+      type=str,
+      default="../Datasets/amber/dh_6-7-9-11/ref_ene.json",
+      help='Directory to output results')
+    parser.add_argument('--out', metavar='filename',
+      type=str,
+      default="../Datasets/amber/dh_6-7-9-11/jaxout",
+      help='Directory to output results')
+    parser.add_argument('--minsteps', metavar='steps',
+      type=int,
+      default=2000,
+      help='Maximum number of energy minimization steps')
+    parser.add_argument('--maxiter', metavar='iterations',
+      type=int,
+      default=1000,
+      help='Maximum number of optimization iterations')
+    parser.add_argument('--mininterval', metavar='iterations',
+      type=int,
+      default=5,
+      help='Number of parameter optimization iterations between geometry optimization')
+
+    args = parser.parse_args()
+
+    ff_opt(args.prmtop, args.params, args.geo, args.minsteps, args.maxiter, args.reference, args.out, args.mininterval)
+
+if __name__ == "__main__":
+    main()
+
+# needs a file with the reference energies as a dictionary, very simple format
+# the torsions are read from the params file and then matched with the parameter indices from the prmtop
+# it's assumed that the torsion being constrained is the first torsion in this list but i could change this if some other behavior is desired
+
+# have to figure out how to do parmed mods for torsion prms, if 2 torsions have the same params, they end up mapping to the same index, even when parmed updates them
+# this isn't good because we want different indices for every torsion, not sure if there's an easy way to force seperate parameter indices to be generated
+# the code as is doesn't touch parmed except for the final parameter update so it's assumed that the seperate torsion parameter indices exist before running the optimizer
+
+
+# if any structures don't display good results, we can look into changing minimization interval, optimizer tolerance, and a few other
+# things. there was also the discussion about offloading the constrained minimization to a package with better tools for it and just
+# doing the final gradient evaluation in jax at a potential speed hit. constraint parameters can also be tuned with current reax style approach
+
+# could look into doing meta optimization of these penalty term parameters assuming there's good energy or other physical references
+# from a better approach to avoid overfitting the restraint by treating loss as angular deviation alone
