@@ -394,6 +394,7 @@ def main():
           #      'hbond_h_size': 300,
           #      'hbond_filter_far_size': 300,
           #      'hbond_filter_close_size': 300}
+          #TODO: This likely doesn't need to be bigger than max # particles in the worst case scenario
           max_sizes = {'num_atoms': 0,
                'periodic_image_count': 0,
                'far_nbr_size': 300}
@@ -1033,14 +1034,22 @@ def main():
     else:
       # extend the interaction list sizes if needed
       for i in range(len(aligned_data)):
-        sub_nbr = allocate_func(list_positions[i], aligned_data[i],
-                                   force_field, center_sizes[i])[0]
-        if jnp.any(sub_nbr.did_buffer_overflow):
-          center_sizes[i] = update_inter_sizes(list_positions[i],
-                                                   aligned_data[i],
-                                                   force_field,
-                                                   center_sizes[i],
-                                                   multip=1.5)
+        if ff_type_int == 2:
+          sub_nbr, counts, did_overflow = allocate_func(list_positions[i],
+                                          aligned_data[i],
+                                          force_field, center_sizes[i])
+          #print("Far NBR alloc size", counts['far_nbr_size'])
+          if jnp.any(did_overflow):
+            print("Far Nbr Counts overflow count:", counts['far_nbr_size'])
+        else:
+          sub_nbr = allocate_func(list_positions[i], aligned_data[i],
+                                    force_field, center_sizes[i])[0]
+          if jnp.any(sub_nbr.did_buffer_overflow):
+            center_sizes[i] = update_inter_sizes(list_positions[i],
+                                                    aligned_data[i],
+                                                    force_field,
+                                                    center_sizes[i],
+                                                    multip=1.5)
 
     loss, indiv_errors = new_loss_func(params, param_indices,
                                       force_field, training_data,

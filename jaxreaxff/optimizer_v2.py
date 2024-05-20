@@ -28,7 +28,7 @@ import logging
 import math
 from jaxreaxff.interactions import DYNAMIC_INTERACTION_KEYS
 from jax_md.space import map_neighbor
-
+import sys
 rdndgr = 180.0/onp.pi
 dgrrdn = 1.0/rdndgr
 
@@ -39,6 +39,11 @@ from jax_md.reaxff.reaxff_energy import calculate_eem_charges, taper
 #jax.config.update("jax_debug_nans", True)
 #jax.config.update("jax_disable_jit", True)
 
+import logging
+
+# mask with 0 in place of exclusions and scee for 1-4
+def generate_exclusion_mask(prm_raw_data):
+  return
 
 def amber_eem_energy(pos,
                      boxVectors,
@@ -56,11 +61,6 @@ def amber_eem_energy(pos,
                      backprop_solve=False,
                      tol=1e-06,
                      max_solver_iter=500):
-  #(k, l, b1_idx, b2_idx, param_index)
-  #(k, eqangle, a1_idx, a2_idx, a3_idx, param_index)
-  #(k, phase, periodicity, t1_idx, t2_idx, t3_idx, t4_idx, param_index)
-  #(pairs, pairs14, atom_type, sigma, epsilon, scnb)
-  #(charges, pairs, pairs14, scee)
   pos = pos/10
 
   #print("amber prms", amberPrms)
@@ -76,11 +76,118 @@ def amber_eem_energy(pos,
   # call eem routine to generate charges
   N = len(species)
   atom_mask = species >= 0
+  # far_nbr_inds = nbr_lists
+
+  # far_neigh_types = species[far_nbr_inds]
+  # far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
+  #                                       & atom_mask[far_nbr_inds])
+  # #far_nbr_dists = far_nbr_dists * far_nbr_mask * 14.4
+  # far_nbr_dists = far_nbr_dists * far_nbr_mask
+
+  ########################################################################################################################
+  
+  # # jnp.set_printoptions(threshold=sys.maxsize, suppress=True)
+  # # logging.basicConfig(filename="z3.log",
+  # #                   level=logging.INFO)
+  # #logging.getLogger().setLevel(logging.INFO)
+  # # logger = logging.getLogger()
+  # #jax.debug.callback(logger.info, "far_nbr_inds", ordered=True)
+  # # jax.debug.callback(logger.info, far_nbr_inds, ordered=True)
+  # #jax.debug.callback(logger.info, "far_nbr_dists", ordered=True)
+  # # jax.debug.callback(logger.info, far_nbr_dists, ordered=True)
+  # #jax.debug.callback(logger.info, "atom mask", ordered=True)
+  # # jax.debug.callback(logger.info, atom_mask, ordered=True)
+  # #jax.debug.callback(sys.exit)
+
+
+
+  # # #N = len(pos)
+  # # # mask off/recompute indices
+  # # # list -> distance matrix
+  # # A = jax.vmap(lambda j: jax.vmap(lambda i: jnp.sum(far_nbr_dists[i] * (far_nbr_inds[i] == j)))(jnp.arange(N)))(jnp.arange(N))
+
+  # # jax.debug.callback(logger.info, amberPrms.pairs[:,0], ordered=True)
+
+  # # jax.debug.callback(logger.info, [9999999999], ordered=True)
+
+  # # 1-2/1-3 exclusions mask - only i,j = 1 are valid pairs
+  # exclusions_mask = jnp.zeros((N,N))
+  # exclusions_mask = exclusions_mask.at[amberPrms.pairs[:,0], amberPrms.pairs[:,1]].set(1.)
+  # exclusions_mask = exclusions_mask.at[amberPrms.pairs[:,1], amberPrms.pairs[:,0]].set(1.)
+  # exclusions_mask = exclusions_mask.at[amberPrms.pairs14[:,0], amberPrms.pairs14[:,1]].set(1.2) #1., 1/1.2, or 1.2?
+  # exclusions_mask = exclusions_mask.at[amberPrms.pairs14[:,1], amberPrms.pairs14[:,0]].set(1.2)
+
+  # #jax.debug.callback(logger.info, exclusions_mask, ordered=True)
+
+  # # isn't exclusion mask also a canonical test for which pairs should be used?
+  # # i.e nbr_inds = mapped_argwhere(exclusions_mask > 0)
+  # mapped_argwhere = jax.vmap(lambda vec:
+  #                           jnp.argwhere(vec, size=300, fill_value=N))
+  # far_nbr_inds = mapped_argwhere(exclusions_mask > 0)[:,:,0]
+
+  # #jax.debug.callback(logger.info, far_nbr_inds, ordered=True)
+
+  # calc_dist = map_neighbor(lambda x,y: calculate_dist(x - y))
+  # R = pos*10
+  # R_far_nbr = R[far_nbr_inds,:]
+  # far_nbr_dists = calc_dist(R, R_far_nbr)
+
+  # # print("dists shape", far_nbr_dists.shape)
+  # # print("inds shape", far_nbr_inds.shape)
+
+  # far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
+  #                                       & atom_mask[far_nbr_inds])
+
+  # # 14.4 conversion factor?
+  # #far_nbr_dists = far_nbr_dists * far_nbr_mask
+  # far_nbr_dists = far_nbr_dists * far_nbr_mask * 14.4
+
+  # #jax.debug.callback(logger.info, far_nbr_dists, ordered=True)
+
+  # #jax.debug.breakpoint()
+  # #jax.debug.callback(sys.exit)
+  # #sys.exit()
+
+  # # # mask off and scale exclusions
+  # # A = A * exclusions_mask
+
+  # # # regenerate indices list and distance list
+  # # mapped_argwhere = jax.vmap(lambda vec:
+  # #                              jnp.argwhere(vec, size=300, fill_value=N))
+  # # sel_inds = mapped_argwhere((dist_mats < cutoff) & (dist_mats > 0))
+  # # neigh_inds = sel_inds[:,:,0]
+  # # dists = dist_mats[jnp.arange(N).reshape(-1,1), neigh_inds]
+
+  # # jax.debug.callback(logger.info, exclusions_mask, ordered=True)
+  # #jax.debug.callback(logger.info, "far_nbr_dists", ordered=True)
+  # # jax.debug.callback(logger.info, dists, ordered=True)
+  # #jax.debug.callback(logger.info, "atom mask", ordered=True)
+  # #jax.debug.callback(logger.info, atom_mask, ordered=True)
+  # # jax.debug.callback(sys.exit)
+
+  # charges = amber.calculate_eem_charges_amber(species,
+  #                                   atom_mask,
+  #                                   far_nbr_inds,
+  # #                                  hulp2_mat,
+  #                                   far_nbr_dists,
+  #                                   force_field.idempotential,
+  #                                   force_field.electronegativity,
+  #                                   init_charges,
+  #                                   total_charge,
+  #                                   backprop_solve,
+  #                                   tol,
+  #                                   max_solver_iter)
+
+  #################################################################################################################
+
   far_nbr_inds = nbr_lists
+
   far_neigh_types = species[far_nbr_inds]
   far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
                                         & atom_mask[far_nbr_inds])
+  #far_nbr_dists = far_nbr_dists * far_nbr_mask * 14.4
   far_nbr_dists = far_nbr_dists * far_nbr_mask
+
   tapered_dists = taper(far_nbr_dists, 0.0, 10.0)
   tapered_dists = jnp.where((far_nbr_dists > 10.0) | (far_nbr_dists < 0.001),
                             0.0,
@@ -97,6 +204,7 @@ def amber_eem_energy(pos,
                                     far_nbr_inds,
                                     hulp2_mat,
                                     tapered_dists,
+                                    #far_nbr_dists, to disable tapering
                                     force_field.idempotential,
                                     force_field.electronegativity,
                                     init_charges,
@@ -104,39 +212,22 @@ def amber_eem_energy(pos,
                                     backprop_solve,
                                     tol,
                                     max_solver_iter)
-  
-  #jax.debug.print("EEM Charges {charges}", charges=charges)
-  #jax.debug.callback the charges to a log file to then analyze
-  
-  # print("Charges EEM", charges)
-  
+    
   original_chgs, pairs, pairs14, scee = cprm
 
-  #print("len og chgs", len(original_chgs))
-  #print("len chgs", len(charges))
+  # jax.debug.callback(logger.info, original_chgs, ordered=True)
+  # jax.debug.callback(logger.info, charges, ordered=True)
+  # jax.debug.callback(logger.info, original_chgs-charges, ordered=True)
+  # jax.debug.callback(sys.exit)
 
-  # TODO: spurious charge appearing in last (masked) position in structure
-  # figure out if this has an impact on the gradient and potentially
-  # resize to exactly len(numatoms) with a mask on the final energies
-  # also consider mask for every nrg term to ensure numerical correctness
-  # also evaluate if charge generation even has any effects on gradient
-  # due to using positions from external interaction lists
+  #jax.debug.callback the charges to a log file to then analyze
+  #jax.debug.print("Original Charges {og_charges}", og_charges=original_chgs)
+  #jax.debug.print("EEM Charges {charges}", charges=charges)
 
   # mask eem charges to remove spurious charges from mask
   charges = jnp.where(jnp.isclose(original_chgs, 0.), 0., charges)
 
   cprm = (charges, pairs, pairs14, scee)
-
-  # print("Charges", charges)
-  # print("Original Charges", original_chgs)
-  # print(original_chgs)
-  # print("EEM Charges")
-  # print(charges)
-  #print("positions")
-  #print(pos)
-  # print("aprm")
-  # print(aprm)
-
 
   # call amber function to return required observable
   #print("energies")
@@ -154,6 +245,9 @@ def amber_eem_energy(pos,
   # print("Torsion Grad", torsion_grad_fn(pos, boxVectors, tprm))
   #print("Torsion E", amber.torsion_get_energy(pos, boxVectors, tprm))
   #sys.exit()
+
+  # jax.debug.print("Total E w/o NB: {totalE}", totalE=totalE)
+
   totalE += amber.lj_get_energy(pos, boxVectors, lprm)
   # lj_grad_fn = jax.grad(amber.lj_get_energy)
   # print("LJ Grad", lj_grad_fn(pos, boxVectors, lprm))
@@ -168,7 +262,10 @@ def amber_eem_energy(pos,
   # sys.exit()
   #print("Total E", totalE)
   #sys.exit()
-  #jax.debug.print("Total E {totalE}", totalE=totalE)
+  # jax.debug.print("Total E {totalE}", totalE=totalE)
+  #jax.debug.callback(logger.info, totalE, ordered=True)
+
+  # jax.debug.print("Total E with NB: {totalE}", totalE=totalE)
 
   # return energy and charges to preserve modularity with existing reaxff code
   return totalE/4.184, charges
@@ -296,6 +393,7 @@ def calculate_far_dists(positions, structure, far_nbr_inds, far_nbr_shifts):
   shifts = structure.periodic_image_shifts
   orth_matrix = structure.orth_matrix
   shift_pos = jnp.dot(orth_matrix,shifts.transpose()).transpose()
+  #TODO: This may cause issues at some point
   #R_far_nbr = R[far_nbr_inds,:] + shift_pos[far_nbr_shifts]
   R_far_nbr = R[far_nbr_inds,:]
   far_nbr_dists = calc_dist(R, R_far_nbr)
@@ -345,6 +443,15 @@ def calculate_energy_and_charges(positions,
     #       hb_ang_dist)
 
     far_nbr_inds, far_nbr_shifts, far_dists = nbr_lists
+    #jax.debug.print("Far NBR Inds {far_nbr}", far_nbr=far_nbr_inds)
+    #sys.exit()
+    # [[ 1  2  3 ... 27 27 27]
+    # [ 0  2  3 ... 27 27 27]
+    # [ 0  1  3 ... 27 27 27]
+    # ...
+    # [27 27 27 ... 27 27 27]
+    # [27 27 27 ... 27 27 27]
+    # [27 27 27 ... 27 27 27]]
 
     far_dists = calculate_far_dists(positions, structure, far_nbr_inds, far_nbr_shifts)
 
@@ -362,7 +469,7 @@ def calculate_energy_and_charges(positions,
                      force_field,
                      init_charges=None,
                      total_charge=structure.total_charge,
-                     backprop_solve=True,
+                     backprop_solve=False,
                      tol=1e-06,
                      max_solver_iter=-1)
 
@@ -546,6 +653,8 @@ def calculate_loss(force_field,
   if training_data.charge_items != None:
     charge_items = training_data.charge_items
     charge_preds = all_charges[charge_items.sys_ind,charge_items.a_ind]
+    #jax.debug.print("EEM Charges {charge_preds}", charge_preds=charge_preds)
+    #jax.debug.print("Training Charges {charge_itm}", charge_itm=charge_items.target)
     charge_errors = ((charge_items.target - charge_preds) /
                            charge_items.weight) ** 2
     charge_error = jnp.sum(charge_errors)
@@ -776,6 +885,7 @@ def energy_minimize(list_structure,
                                  amberPrms[i],
                                  ff_type_int)
         #print("Minimization Energy", energy)
+        #sys.exit()
         #print("len shape", len(list_sub_cur_pos[i]))
         #print(list_sub_cur_pos[i])
 
@@ -927,21 +1037,29 @@ def train_FF(params, param_indices, param_bounds, force_field,
     else:
       # extend the interaction list sizes if needed
       for i in range(len(list_structure)):
-        sub_nbr, new_c = allocate_func(list_positions[i], list_structure[i],
-                                   force_field, center_sizes[i])
-        if jnp.any(sub_nbr.did_buffer_overflow):
-          print(f"Interaction list overflow for cluster-{i+1} during training!")
-          new_cluster_center = update_inter_sizes(list_positions[i],
-                                                   list_structure[i],
-                                                   force_field,
-                                                   center_sizes[i],
-                                                   multip=1.5)
-          
-          print("name: old size -> new size")
-          for k in new_c.keys():
-            #if center_sizes[i][k] != new_cluster_center[k]:
-            print(f"{k}: {center_sizes[i][k]}->{new_cluster_center[k]}")
-          center_sizes[i] = new_cluster_center
+        if ff_type_int == 2:
+          sub_nbr, counts, did_overflow = allocate_func(list_positions[i],
+                                          list_structure[i],
+                                          force_field, center_sizes[i])
+          #print("Far NBR alloc size", counts['far_nbr_size'])
+          if jnp.any(did_overflow):
+            print("Far Nbr Counts overflow count:", counts['far_nbr_size'])
+        else:
+          sub_nbr, new_c = allocate_func(list_positions[i], list_structure[i],
+                                    force_field, center_sizes[i])
+          if jnp.any(sub_nbr.did_buffer_overflow):
+            print(f"Interaction list overflow for cluster-{i+1} during training!")
+            new_cluster_center = update_inter_sizes(list_positions[i],
+                                                    list_structure[i],
+                                                    force_field,
+                                                    center_sizes[i],
+                                                    multip=1.5)
+            
+            print("name: old size -> new size")
+            for k in new_c.keys():
+              #if center_sizes[i][k] != new_cluster_center[k]:
+              print(f"{k}: {center_sizes[i][k]}->{new_cluster_center[k]}")
+            center_sizes[i] = new_cluster_center
 
     # calculate the true loss, right after energy minimization
     prev_true_loss = true_current_loss
