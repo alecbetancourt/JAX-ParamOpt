@@ -20,6 +20,9 @@ from parmedmod import UpdateParmTopCLI
 losses = []
 iteration = 0
 
+best_loss = jnp.iinfo(jnp.int64).max
+best_params = None
+
 # Reads json data 
 def ReadJsonData(json_path):
 
@@ -292,6 +295,13 @@ def ObjectiveFunction(scipy_params, *args):
     plt.savefig(outdir + "/iteration_%s.png" % iteration)
     plt.close()
 
+    # Update best values if applicable
+    global best_loss
+    global best_params
+    if loss < best_loss:
+        best_loss = loss
+        best_params = scipy_params
+
     # scipy requires jac gradient as list
     return loss, list(grad)
 
@@ -378,6 +388,10 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, ref_ene, outdi
            bounds=bounds, method=algorithm, options={'maxiter':opt_loops, 'eps': step_size})
 
     print("Losses:", losses)
+
+    print("Best Loss:", best_loss)
+
+    print("Best Params:", best_params)
 
     print("Final Params: ", minimization_result.x)
 
