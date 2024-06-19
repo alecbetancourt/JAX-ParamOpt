@@ -22,6 +22,7 @@ iteration = 0
 
 best_loss = jnp.iinfo(jnp.int64).max
 best_params = None
+best_iteration = -1
 
 # Reads json data 
 def ReadJsonData(json_path):
@@ -298,9 +299,11 @@ def ObjectiveFunction(scipy_params, *args):
     # Update best values if applicable
     global best_loss
     global best_params
+    global best_iteration
     if loss < best_loss:
         best_loss = loss
         best_params = scipy_params
+        best_iteration = iteration
 
     # scipy requires jac gradient as list
     return loss, list(grad)
@@ -390,6 +393,8 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, ref_ene, outdi
     print("Losses:", losses)
 
     print("Best Loss:", best_loss)
+
+    print("Best Iteration:", best_iteration)
 
     print("Best Params:", best_params)
 
