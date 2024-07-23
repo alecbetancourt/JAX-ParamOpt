@@ -646,4 +646,6 @@ def reaxff_interaction_list_generator(force_field,
     #                             jnp.zeros(shape=batch_size, dtype=jnp.bool_))
     return (far_nbr_inds, far_nbr_shifts, far_dists), new_counts, did_overflow
 
-  return batched_allocate, batched_allocate_amber
+  #TODO: figure out a better way of managing this generator in the amber case
+  return batched_allocate
+  #return batched_allocate, batched_allocate_amber
