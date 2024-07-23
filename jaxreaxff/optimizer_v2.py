@@ -60,7 +60,8 @@ def amber_eem_energy(pos,
                      total_charge=0.0,
                      backprop_solve=False,
                      tol=1e-06,
-                     max_solver_iter=500):
+                     max_solver_iter=500,
+                     charge_type_int=None):
   pos = pos/10
 
   #print("amber prms", amberPrms)
@@ -125,15 +126,18 @@ def amber_eem_energy(pos,
   #                           jnp.argwhere(vec, size=300, fill_value=N))
   # far_nbr_inds = mapped_argwhere(exclusions_mask > 0)[:,:,0]
 
-  # #jax.debug.callback(logger.info, far_nbr_inds, ordered=True)
+  #jax.debug.callback(logger.info, far_nbr_inds, ordered=True)
 
   # calc_dist = map_neighbor(lambda x,y: calculate_dist(x - y))
   # R = pos*10
   # R_far_nbr = R[far_nbr_inds,:]
   # far_nbr_dists = calc_dist(R, R_far_nbr)
 
-  # # print("dists shape", far_nbr_dists.shape)
-  # # print("inds shape", far_nbr_inds.shape)
+  # print("dists shape", far_nbr_dists.shape)
+  # print("inds shape", far_nbr_inds.shape)
+
+  # # for no exclusions
+  # far_nbr_inds = nbr_lists
 
   # far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
   #                                       & atom_mask[far_nbr_inds])
@@ -142,76 +146,98 @@ def amber_eem_energy(pos,
   # #far_nbr_dists = far_nbr_dists * far_nbr_mask
   # far_nbr_dists = far_nbr_dists * far_nbr_mask * 14.4
 
-  # #jax.debug.callback(logger.info, far_nbr_dists, ordered=True)
+  #jax.debug.callback(logger.info, far_nbr_dists, ordered=True)
 
-  # #jax.debug.breakpoint()
-  # #jax.debug.callback(sys.exit)
-  # #sys.exit()
+  #jax.debug.breakpoint()
+  #jax.debug.callback(sys.exit)
+  #sys.exit()
 
-  # # # mask off and scale exclusions
-  # # A = A * exclusions_mask
+  # # mask off and scale exclusions
+  # A = A * exclusions_mask
 
-  # # # regenerate indices list and distance list
-  # # mapped_argwhere = jax.vmap(lambda vec:
-  # #                              jnp.argwhere(vec, size=300, fill_value=N))
-  # # sel_inds = mapped_argwhere((dist_mats < cutoff) & (dist_mats > 0))
-  # # neigh_inds = sel_inds[:,:,0]
-  # # dists = dist_mats[jnp.arange(N).reshape(-1,1), neigh_inds]
+  # # regenerate indices list and distance list
+  # mapped_argwhere = jax.vmap(lambda vec:
+  #                              jnp.argwhere(vec, size=300, fill_value=N))
+  # sel_inds = mapped_argwhere((dist_mats < cutoff) & (dist_mats > 0))
+  # neigh_inds = sel_inds[:,:,0]
+  # dists = dist_mats[jnp.arange(N).reshape(-1,1), neigh_inds]
 
-  # # jax.debug.callback(logger.info, exclusions_mask, ordered=True)
-  # #jax.debug.callback(logger.info, "far_nbr_dists", ordered=True)
-  # # jax.debug.callback(logger.info, dists, ordered=True)
-  # #jax.debug.callback(logger.info, "atom mask", ordered=True)
-  # #jax.debug.callback(logger.info, atom_mask, ordered=True)
-  # # jax.debug.callback(sys.exit)
+  # jax.debug.callback(logger.info, exclusions_mask, ordered=True)
+  #jax.debug.callback(logger.info, "far_nbr_dists", ordered=True)
+  # jax.debug.callback(logger.info, dists, ordered=True)
+  #jax.debug.callback(logger.info, "atom mask", ordered=True)
+  #jax.debug.callback(logger.info, atom_mask, ordered=True)
+  # jax.debug.callback(sys.exit)
 
-  # charges = amber.calculate_eem_charges_amber(species,
-  #                                   atom_mask,
-  #                                   far_nbr_inds,
-  # #                                  hulp2_mat,
-  #                                   far_nbr_dists,
-  #                                   force_field.idempotential,
-  #                                   force_field.electronegativity,
-  #                                   init_charges,
-  #                                   total_charge,
-  #                                   backprop_solve,
-  #                                   tol,
-  #                                   max_solver_iter)
+  # for no exclusions
+  if charge_type_int == 2:
+    far_nbr_inds = nbr_lists
+
+    far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
+                                          & atom_mask[far_nbr_inds])
+
+    # 14.4 conversion factor?
+    #far_nbr_dists = far_nbr_dists * far_nbr_mask
+    far_nbr_dists = far_nbr_dists * far_nbr_mask * 14.4
+
+    charges = amber.calculate_eem_charges_amber(species,
+                                      atom_mask,
+                                      far_nbr_inds,
+    #                                  hulp2_mat,
+                                      far_nbr_dists,
+                                      force_field.idempotential,
+                                      force_field.electronegativity,
+                                      init_charges,
+                                      total_charge,
+                                      backprop_solve,
+                                      tol,
+                                      max_solver_iter)
 
   #################################################################################################################
 
-  far_nbr_inds = nbr_lists
+  if charge_type_int == 0 or charge_type_int == 1:
+    far_nbr_inds = nbr_lists
 
-  far_neigh_types = species[far_nbr_inds]
-  far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
-                                        & atom_mask[far_nbr_inds])
-  #far_nbr_dists = far_nbr_dists * far_nbr_mask * 14.4
-  far_nbr_dists = far_nbr_dists * far_nbr_mask
+    far_neigh_types = species[far_nbr_inds]
+    # print("far nbr inds shape", far_nbr_inds.shape)
+    # print("atom mask shape", atom_mask.shape)
+    # sys.exit()
+    far_nbr_mask = (far_nbr_inds != N) & (atom_mask.reshape(-1,1)
+                                          & atom_mask[far_nbr_inds])
+    #far_nbr_dists = far_nbr_dists * far_nbr_mask * 14.4
+    far_nbr_dists = far_nbr_dists * far_nbr_mask
 
-  tapered_dists = taper(far_nbr_dists, 0.0, 10.0)
-  tapered_dists = jnp.where((far_nbr_dists > 10.0) | (far_nbr_dists < 0.001),
-                            0.0,
-                            tapered_dists)
+    tapered_dists = far_nbr_dists
 
-  gamma = jnp.power(force_field.gamma.reshape(-1, 1), 3/2)
-  gamma_mat = gamma * gamma.transpose()
-  gamma_mat = gamma_mat[far_neigh_types, species.reshape(-1, 1)]
-  hulp1_mat = far_nbr_dists ** 3 + (1/gamma_mat)
-  hulp2_mat = jnp.power(hulp1_mat, 1.0/3.0) * far_nbr_mask
+    if charge_type_int == 0:
+      tapered_dists = taper(far_nbr_dists, 0.0, 10.0)
+      tapered_dists = jnp.where((far_nbr_dists > 10.0) | (far_nbr_dists < 0.001),
+                                0.0,
+                                tapered_dists)
 
-  charges = calculate_eem_charges(species,
-                                    atom_mask,
-                                    far_nbr_inds,
-                                    hulp2_mat,
-                                    tapered_dists,
-                                    #far_nbr_dists, to disable tapering
-                                    force_field.idempotential,
-                                    force_field.electronegativity,
-                                    init_charges,
-                                    total_charge,
-                                    backprop_solve,
-                                    tol,
-                                    max_solver_iter)
+    gamma = jnp.power(force_field.gamma.reshape(-1, 1), 3/2)
+    gamma_mat = gamma * gamma.transpose()
+    gamma_mat = gamma_mat[far_neigh_types, species.reshape(-1, 1)]
+    hulp1_mat = far_nbr_dists ** 3 + (1/gamma_mat)
+    hulp2_mat = jnp.power(hulp1_mat, 1.0/3.0) * far_nbr_mask
+
+    # TODO: note that this is the reax version rather than amber, should eventually standardize
+    charges = calculate_eem_charges(species,
+                                      atom_mask,
+                                      far_nbr_inds,
+                                      hulp2_mat,
+                                      # with tapering
+                                      tapered_dists,
+                                      # to disable tapering
+                                      #far_nbr_dists,
+                                      #
+                                      force_field.idempotential,
+                                      force_field.electronegativity,
+                                      init_charges,
+                                      total_charge,
+                                      backprop_solve,
+                                      tol,
+                                      max_solver_iter)
     
   original_chgs, pairs, pairs14, scee = cprm
 
@@ -404,7 +430,8 @@ def calculate_energy_and_charges(positions,
                                  nbr_lists,
                                  force_field,
                                  amberPrms,
-                                 ff_type_int):
+                                 ff_type_int,
+                                 charge_type_int):
   '''
   Calculate energy and charges for a given system
   '''
@@ -471,7 +498,8 @@ def calculate_energy_and_charges(positions,
                      total_charge=structure.total_charge,
                      backprop_solve=False,
                      tol=1e-06,
-                     max_solver_iter=-1)
+                     max_solver_iter=-1,
+                     charge_type_int=charge_type_int)
 
   # print("Energy fn energies", jnp.shape(energy))
   # print("Positions",jnp.shape(positions))
@@ -536,7 +564,8 @@ def calculate_energy_and_charges_w_rest(positions,
                                  nbr_lists,
                                  force_field,
                                  amberPrms,
-                                 ff_type_int):
+                                 ff_type_int,
+                                 charge_type_int):
   '''
   Calculate energy and charges for a given system while inclding the restraints
   '''
@@ -546,7 +575,8 @@ def calculate_energy_and_charges_w_rest(positions,
                                    nbr_lists,
                                    force_field,
                                    amberPrms,
-                                   ff_type_int)
+                                   ff_type_int,
+                                   charge_type_int)
   bond_rest_en = calculate_bond_restraint_energy(positions, structure)
   angle_rest_en = calculate_angle_restraint_energy(positions, structure)
   torsion_rest_en = calculate_torsion_restraint_energy(positions, structure)
@@ -561,17 +591,18 @@ def calculate_loss(force_field,
                     training_data,
                     return_indiv_error=False,
                     amberPrms=None,
-                    ff_type_int=None):
+                    ff_type_int=None,
+                    charge_type_int=None):
   '''
   Calculate the loss function
   '''
   # create a dictionary to return individual erros if needed
   all_indiv_errors = dict()
   # Required functions for potential energy and force calculations
-  pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,None,0,None))
+  pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,None,0,None, None))
   pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
                                             has_aux=True),
-                         in_axes=(0,0,0,None,0,None))
+                         in_axes=(0,0,0,None,0,None, None))
 
   dtype = list_positions[0].dtype
 
@@ -610,7 +641,8 @@ def calculate_loss(force_field,
                                                 list_nbr_lists[i],
                                                 force_field,
                                                 amberPrms[i],
-                                                ff_type_int)
+                                                ff_type_int,
+                                                charge_type_int)
       all_forces = all_forces.at[list_structure[i].name,
                                  :atom_counts[i],
                                  :].set(forces)
@@ -621,7 +653,8 @@ def calculate_loss(force_field,
                                 list_nbr_lists[i],
                                 force_field,
                                 amberPrms[i],
-                                ff_type_int)
+                                ff_type_int,
+                                charge_type_int)
     # print("charges post vmap", charges)
     # print("charges post shape", charges.shape)
     #print("nrg post vmap", energy)
@@ -797,7 +830,8 @@ def energy_minimize(list_structure,
                     minim_steps = 100,
                     target_RMSG = 1.0,
                     amberPrms=None,
-                    ff_type_int=None):
+                    ff_type_int=None,
+                    charge_type_int=None):
   '''
   Energy minimize the given structures
   '''
@@ -883,7 +917,8 @@ def energy_minimize(list_structure,
                                  sub_nbr,
                                  force_field,
                                  amberPrms[i],
-                                 ff_type_int)
+                                 ff_type_int,
+                                 charge_type_int)
         #print("Minimization Energy", energy)
         #sys.exit()
         #print("len shape", len(list_sub_cur_pos[i]))
@@ -956,10 +991,10 @@ def lower_bounds(params, bounds, advanced_opts):
 def random_parameter_search(bounds, sample_count,
                             param_indices, force_field, training_data,
                             list_positions, aligned_data, center_sizes,
-                            loss_func):
+                            loss_func, amberPrms, ff_type_int, charge_type_int):
 
   args = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes)
+          list_positions, aligned_data, center_sizes, False, amberPrms, ff_type_int, charge_type_int)
   dtype = force_field.gamma.dtype
   min_loss = float('inf')
   min_params = None
@@ -986,7 +1021,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
              iter_count, e_minim_flag, optimizer, optim_options,
              advanced_opts,
              loss_and_grad_func, minim_func, allocate_func,
-             amberPrms, ff_type_int):
+             amberPrms, ff_type_int, charge_type_int):
   '''
   Main parameter optimization routine
   '''
@@ -1023,7 +1058,8 @@ def train_FF(params, param_indices, param_bounds, force_field,
                                                 center_sizes,
                                                 force_field,
                                                 amberPrms=amberPrms,
-                                                ff_type_int=ff_type_int)
+                                                ff_type_int=ff_type_int,
+                                                charge_type_int=charge_type_int)
       minim_end = time.time()
       print("Energy minimization took {:.4f} sec.".format(minim_end-minim_start))
       print('   . E: {:.2f} kcal/mol'.format(cur_total_energy))
@@ -1068,7 +1104,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
                                               force_field, training_data,
                                               list_positions, list_structure,
                                               center_sizes,
-                                              amberPrms, ff_type_int)
+                                              amberPrms, ff_type_int, charge_type_int)
     true_train_loss = float(true_train_loss)
     # calculate the validation loss
     # if valid. data is available, total loss = valid loss + train loss
@@ -1077,7 +1113,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
                                             force_field, validation_data,
                                             list_positions, list_structure,
                                             center_sizes,
-                                            amberPrms, ff_type_int)
+                                            amberPrms, ff_type_int, charge_type_int)
       true_valid_loss = float(true_valid_loss)
       print("True training loss: {:.2f}".format(true_train_loss))
       print("True validation loss: {:.2f}".format(true_valid_loss))
@@ -1102,7 +1138,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
     if e < iter_count:
       args = (param_indices,
               force_field, training_data,
-              list_positions, list_structure, center_sizes, amberPrms, ff_type_int)
+              list_positions, list_structure, center_sizes, amberPrms, ff_type_int, charge_type_int)
       min_state = minimize(loss_and_grad_func, params, jac=True, args=args,
                            method=optimizer,
                            bounds=param_bounds,options=optim_options)
