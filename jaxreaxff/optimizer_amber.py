@@ -1,8 +1,9 @@
 import sys, json
 from scipy.optimize import minimize
 import numpy as np
-import jax.numpy as jnp
 import jax
+#jax.config.update("jax_platform_name", "cpu")
+import jax.numpy as jnp
 import jax_md
 import matplotlib.pyplot as plt
 import jax_md.amber.amber_energy as amber

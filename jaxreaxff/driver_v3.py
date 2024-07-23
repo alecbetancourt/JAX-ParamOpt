@@ -92,7 +92,7 @@ def main():
       default=5,
       help='Number of optimization steps per trial')
   parser.add_argument('--init_FF_type', metavar='init_type',
-      choices=['random', 'educated', 'fixed'],
+      choices=['random', 'educated', 'fixed', 'genetic', 'cmaes', 'snes', 'openes', 'pgpe'],
       default='fixed',
       help='R|How to start the trials from the given initial force field.\n' +
       '"random": Sample the parameters from uniform distribution between given ranges.\n'
@@ -164,12 +164,31 @@ def main():
       type=bool,
       default=False,
       help='Boolean to determine if prmtop files need to be generated from .xyz files')
+  parser.add_argument('--charge_type', metavar='charge_type',
+      choices=['shieldtaper', 'shield', 'simple'],
+      type=str,
+      default='shieldtaper',
+      help='Charge model to use - "shieldtaper" or "shield" or "simple"')
+  parser.add_argument('--generations', metavar='# of generations',
+      type=int,
+      default=1000,
+      choices=range(1, 10000),
+      help='Number of generations assuming a genetic preconditioner is used')
 
   #parse arguments
   args = parser.parse_args()
 
   ff_type_map = {'reaxff':0, 'amber':1, 'ambereem':2}
   ff_type_int = ff_type_map[args.ff_type]
+
+  charge_type_map = {'shieldtaper':0, 'shield':1, 'simple':2}
+  charge_type_int = charge_type_map[args.charge_type]
+  print("[INFO] Charge Generation Type:", args.charge_type)
+  print("[INFO] Initial FF Type:", args.init_FF_type)
+  print("[INFO] Random Sample Count:", args.random_sample_count)
+  print("[INFO] Number of Minimization Steps:", args.num_e_minim_steps)
+  print("[INFO] Number of Generations:", args.generations)
+
   # TODO: Rationalize default values and types to enable seamless switching with missing arguments
   aligned_amber_ff = None
 
@@ -757,7 +776,7 @@ def main():
 
   batched_allocate, batched_allocate_amber = reaxff_interaction_list_generator(force_field,
                                                        close_cutoff = 5.0,
-                                                       far_cutoff = 10.0,
+                                                       far_cutoff = 100.0,
                                                        use_hbond=True)
   
   #alternative far nbr generation
@@ -784,7 +803,7 @@ def main():
   # TODO: Fix the JIT behavior of these functions by fixing the underlying vmapping
   force_f = jax.jit(jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
                                             has_aux=True),
-                         in_axes=(0,0,0,None,0,None)), static_argnames=('ff_type_int'))
+                         in_axes=(0,0,0,None,0,None, None)), static_argnames=('ff_type_int', 'charge_type_int'))
   
   # force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
   #                                            has_aux=True),
@@ -797,8 +816,8 @@ def main():
 
 
   loss_and_grad_func = jax.jit(jax.value_and_grad(calculate_loss),
-                               static_argnames=('return_indiv_error','ff_type_int'))
-  loss_func = jax.jit(calculate_loss, static_argnames=('return_indiv_error','ff_type_int'))
+                               static_argnames=('return_indiv_error','ff_type_int', 'charge_type_int'))
+  loss_func = jax.jit(calculate_loss, static_argnames=('return_indiv_error','ff_type_int', 'charge_type_int'))
   # loss_and_grad_func = jax.value_and_grad(calculate_loss)
   # loss_func = calculate_loss
 
@@ -897,7 +916,7 @@ def main():
   def new_loss_and_grad_func(params, param_indices,
                              force_field, training_data,
                              list_positions, aligned_data, center_sizes,
-                             amberPrms=None, ff_type_int=None):
+                             amberPrms=None, ff_type_int=None, charge_type_int=None):
     params = jnp.array(params)
     force_field = set_params_jit(force_field, param_indices, params)
     all_inters = [allocate_func(list_positions[i], aligned_data[i],
@@ -910,11 +929,14 @@ def main():
                                         training_data,
                                         False,
                                         amberPrms,
-                                        ff_type_int)
+                                        ff_type_int,
+                                        charge_type_int)
 
     grads = get_params_jit(grads_ff, param_indices)
     loss = onp.asarray(loss,dtype=onp.float64)
     grads = onp.asarray(grads,dtype=onp.float64)
+    #loss = jnp.asarray(loss,dtype=jnp.float64)
+    #grads = jnp.asarray(grads,dtype=jnp.float64)
 
     return loss, grads
 
@@ -922,7 +944,7 @@ def main():
                     force_field, training_data,
                     list_positions, aligned_data, center_sizes,
                     return_indiv_error = False,
-                    amberPrms=None, ff_type_int=None):
+                    amberPrms=None, ff_type_int=None, charge_type_int=None):
     params = jnp.array(params)
     force_field = set_params_jit(force_field, param_indices, params)
     all_inters = [allocate_func(list_positions[i], aligned_data[i],
@@ -935,12 +957,14 @@ def main():
                     training_data,
                     return_indiv_error,
                     amberPrms,
-                    ff_type_int)
+                    ff_type_int,
+                    charge_type_int)
     if return_indiv_error:
       loss, indiv_errors = results
     else:
       loss = results
     loss = onp.asarray(loss, dtype=onp.float64)
+    #loss = jnp.asarray(loss, dtype=jnp.float64)
     if return_indiv_error:
       return loss, indiv_errors
     return loss
@@ -971,12 +995,135 @@ def main():
       min_params = random_parameter_search(bounds, random_sample_count,
                                   param_indices, force_field, training_data,
                                   list_positions, aligned_data, center_sizes,
-                                  new_loss_func)
+                                  new_loss_func, aligned_amber_ff, ff_type_int, charge_type_int)
       selected_params = min_params
     elif args.init_FF_type == 'educated':
+      #selected_params = add_noise_to_params(init_params, bounds, scale=1.0)
       selected_params = add_noise_to_params(init_params, bounds, scale=0.1)
+    elif args.init_FF_type == 'genetic':
+      print("[INFO] Genetic Parameter Selection Selected")
+      #create 1000 random samples
+      num_samples = 1000
+      #random_prms = jnp.zeros((1000, len(init_params)))
+      random_params = jnp.array(onp.random.uniform(low=bounds[:,0],high=bounds[:,1],size=(1000, len(bounds))))
+      args = (param_indices, force_field, training_data,
+          list_positions, aligned_data, center_sizes, False, aligned_amber_ff, ff_type_int, charge_type_int)
+      losses_fn = jax.vmap(new_loss_func, in_axes=(0,None,None,None,None,None,None,None,None,None,None),
+                                     out_axes=(0,None,None,None,None,None,None,None,None,None,None))
+      current_params = random_params
+      key = jax.random.key(0)
+      min_loss = float('inf')
+      min_params = None
+
+      #number of generations
+      for i in range(20):
+        key, subkey = jax.random.split(key)
+        losses = jnp.array([new_loss_func(p, *args) for p in current_params])
+        #print("Losses", losses)
+        print("Lowest loss for iteration", i, "is", jnp.min(losses))
+        if jnp.min(losses) < min_loss or onp.isnan(min_loss) == True:
+          min_loss = jnp.min(losses)
+          min_idx = jnp.argmin(losses)
+          #print("argmin", min_idx)
+          #sys.exit()
+          min_params = current_params[min_idx]
+        #losses = losses_fn(current_params, *args)
+        sort_idx = jnp.argsort(losses)
+        shuffle_idx = jax.random.permutation(subkey, sort_idx[:20])
+        pairs = shuffle_idx.reshape(-1,2)
+        pairs = jnp.repeat(pairs, 100, axis=0)
+
+        candidate_parents = current_params[pairs]
+
+        #these weights may not add up to 1, shouldnt matter though
+        #could bias these with gradient information
+        #formula is weight * a/ sum weights
+        weights = jax.random.uniform(subkey, shape=candidate_parents.shape)
+
+        current_params = jnp.average(candidate_parents, axis=1, weights=weights)
+        #print min loss
+        #
+        #average between all pairs
+
+      #final_losses = losses_fn(current_params, *args)
+      final_losses = jnp.array([new_loss_func(p, *args) for p in current_params])
+
+      best_idx = jnp.argmin(final_losses)
+
+      print("Best loss for parameter selection:", final_losses[best_idx])
+
+
+      #select 10 best candidates
+      #each pair has 200 "children"
+      #children are selected from random mask between 2 parents
+      #could also add random "blending factor" towards preferred parent
+      #could even base this on fitness or gradient information
+      selected_params = current_params[best_idx]
+    elif args.init_FF_type == 'cmaes':      
+      from evosax import Sep_CMA_ES
+      strategy = Sep_CMA_ES(popsize=256, num_dims=len(bounds))
+    elif args.init_FF_type == 'snes':      
+      from evosax import SNES
+      strategy = SNES(popsize=256, num_dims=len(bounds))
+    elif args.init_FF_type == 'openes':      
+      from evosax import OpenES
+      strategy = OpenES(popsize=256, num_dims=len(bounds))
+    elif args.init_FF_type == 'pgpe':      
+      from evosax import PGPE
+      strategy = PGPE(popsize=256, num_dims=len(bounds))
+
     else: # fixed
       selected_params = jnp.array(init_params)
+
+    if(args.init_FF_type in ['cmaes','snes','openes','pgpe']):
+      #rng = jax.random.PRNGKey(int(time.time()))
+      rng = jax.random.PRNGKey(0)
+      args_loss = (param_indices, force_field, training_data,
+          list_positions, aligned_data, center_sizes, False,
+          aligned_amber_ff, ff_type_int, charge_type_int)
+      es_params = strategy.default_params
+      state = strategy.initialize(rng, es_params)
+      #TODO: consider replacing this with a random distribution
+      initialization = jax.random.uniform(rng, (len(bounds),), minval=bounds[:,0], maxval=bounds[:,1])
+      state = state.replace(best_member=jnp.array(initialization))
+      state = state.replace(mean=jnp.array(initialization))
+      print("Init Params", initialization)
+      print("Starting loss", new_loss_func(jnp.array(initialization), *args_loss))
+      #l_f = jax.vmap(new_loss_func, in_axes=(0,None,None,None,None,None,None,None,None,None,None))
+      #                               out_axes=(0,None,None,None,None,None,None,None,None,None,None))
+
+      # Run ask-eval-tell loop - NOTE: By default minimization!
+      gen_start = time.time()
+      fit_list = []
+      for t in range(args.generations):
+        #TODO: include vmap
+        rng, rng_gen, rng_eval = jax.random.split(rng, 3)
+        x, state = strategy.ask(rng_gen, state, es_params)
+        #print(x)
+
+        x = jnp.clip(x, bounds[:,0], bounds[:,1])
+        #x = jnp.clip(x, 0.1)
+        #print("X shape", x.shape)
+        #print(x)
+        fitness = jnp.array([new_loss_func(p, *args_loss) for p in x], dtype=jnp.float32)
+        #fitness = ...  # Your population evaluation fct
+        #l_f = jax.vmap(new_loss_func)
+        #fitness = jnp.array(l_f(x, *args_loss), dtype=jnp.float32)
+        #fit_list.append(fitness)
+        state = strategy.tell(x, fitness, state, es_params)
+        if (t + 1) % 10 == 0:
+          print("# Gen: {}|Fitness: {:.5f}".format(t+1, state.best_fitness))
+
+      #print("Fitnesses", fit_list)
+      # Get best overall population member & its fitness
+      #state.best_member, state.best_fitness
+      print("Best Member:", state.best_member)
+      print("Best Fitness:", state.best_fitness)
+      selected_params = state.best_member
+      #sys.exit()
+      gen_end = time.time()
+      print("Genetic Optimization Time:", gen_end-gen_start)
+      #sys.exit()
 
     [global_min_params,
      global_min,
@@ -988,7 +1135,8 @@ def main():
                            new_loss_and_grad_func, minim_func, allocate_func,
                            # None, #args.ff_type,
                            aligned_amber_ff,
-                           ff_type_int)
+                           ff_type_int,
+                           charge_type_int)
     end = time.time()
 
     result = {"time":end-start, "value": global_min,
@@ -1029,7 +1177,8 @@ def main():
                                                 center_sizes,
                                                 force_field,
                                                 amberPrms=aligned_amber_ff,
-                                                ff_type_int=ff_type_int)
+                                                ff_type_int=ff_type_int,
+                                                charge_type_int=charge_type_int)
       minim_end = time.time()
     else:
       # extend the interaction list sizes if needed
@@ -1055,7 +1204,7 @@ def main():
                                       force_field, training_data,
                                       list_positions, aligned_data,
                                       center_sizes,
-                                      True, aligned_amber_ff, ff_type_int)
+                                      True, aligned_amber_ff, ff_type_int, charge_type_int)
     for k in indiv_errors.keys():
       # move data to regular numpy arrays
       for i,sub_val in enumerate(indiv_errors[k]):
@@ -1076,7 +1225,7 @@ def main():
                                         force_field, validation_data,
                                         list_positions, aligned_data,
                                         center_sizes,
-                                        True, aligned_amber_ff, ff_type_int)
+                                        True, aligned_amber_ff, ff_type_int, charge_type_int)
       for k in valid_indiv_errors.keys():
         # move data to regular numpy arrays
         for i,sub_val in enumerate(valid_indiv_errors[k]):
