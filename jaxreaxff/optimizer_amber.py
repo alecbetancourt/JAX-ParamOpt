@@ -25,12 +25,12 @@ best_loss = jnp.iinfo(jnp.int64).max
 best_params = None
 best_iteration = -1
 
-# Reads json data 
+# Reads json data
 def ReadJsonData(json_path):
 
     with open(json_path, 'r') as f:
         json_data = json.load(f)
-        
+
     return json_data
 
 # dumps json data into an existing file
@@ -38,7 +38,7 @@ def SaveJsonData(field_dict, json_path):
 
     with open(json_path, 'r') as f:
         json_data = json.load(f)
-        
+
     for key in field_dict:
         json_data[key]=field_dict[key]
 
@@ -51,7 +51,7 @@ def extractCoordinates(flist):
     for file in flist:
         with open(file, 'r') as f:
             lines=f.readlines()
-        
+
         crds = []
         for line in lines[2:]:
             crds.append([jnp.float32(i) for i in line.split()[1:]])
@@ -195,7 +195,7 @@ def min_inner(crds, target, energy_fn_no_restraint, energy_fn, init_fn, body_fn,
 
 def gradObj(scipy_params, *args):
     crds, boxVectors, ref_ene, post_positions, prms_pre, torsions = args
-    
+
     prms = prms_pre
 
     i = 0
@@ -219,7 +219,7 @@ def gradObj(scipy_params, *args):
                 + amber.lj_get_energy(pos, boxVectors, lprm) \
                 + amber.coul_get_energy(pos, boxVectors, cprm))/4.184)
                 #+ amber.rest_get_energy(pos, boxVectors, restraint=restraint))/4.184)
-    
+
     ene_list = [energy_fn(p, prms=prms) for p in post_positions]
 
     min_ene = min(ene_list)
@@ -234,7 +234,7 @@ def gradObj(scipy_params, *args):
 
     return nrg_diff_sqrd
 
-# updates amber prmtop file, runs constrained optimizations, computes difference between ref and computed energy profiles and RMSD.  
+# updates amber prmtop file, runs constrained optimizations, computes difference between ref and computed energy profiles and RMSD.
 def ObjectiveFunction(scipy_params, *args):
     print("Iteration:", iteration+1)
 
@@ -323,7 +323,7 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, ref_ene, outdi
     params_dict=ReadJsonData(params_dir)[initial_guess]
     optvars_dict=ReadJsonData(params_dir)['optvars']
     bounds_dict=ReadJsonData(params_dir)['bounds']
-    
+
     guess=list()
     bounds=list()
 
@@ -349,7 +349,10 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, ref_ene, outdi
             bounds.append(bounds_dict['scnb'])
 
     # Make initial FF modifications using parmed
-    # UpdateParmTopCLI(prmtop_dir, params_dict)
+    rng = np.random.default_rng()
+    for k in params_dict:
+        params_dict[k]['height'] += rng.random() # * 1e-5 too small of a value and parmed will truncate it, adjust this if you'd like
+    UpdateParmTopCLI(prmtop_dir, params_dict)
 
     prmtopomm = app.AmberPrmtopFile(prmtop_dir)
 
@@ -386,7 +389,7 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, ref_ene, outdi
     #boxVectors = jnp.array([v._value for v in system.getDefaultPeriodicBoxVectors()])
     #boxVectors = boxVectors.sum(axis=0)
     boxVectors = jnp.array([100.0, 100.0, 100.0])
-    
+
     minimization_result=minimize(ObjectiveFunction, guess, jac=True, \
            args=(coordinates, boxVectors, ref_ene, params_dict, optvars_dict, prmtopomm, torsion_indices, min_steps, outdir, prmtop_dir, min_interval), \
            bounds=bounds, method=algorithm, options={'maxiter':opt_loops, 'eps': step_size})
@@ -427,7 +430,7 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, min_steps, opt_loops, ref_ene, outdi
         if(optvars_dict['scnb']):
             value['scnb']=x[i]
             i+=1
-    
+
     # SaveJsonData(params_dict, outdir + '/final_params.json')
 
     return
@@ -436,7 +439,7 @@ def main():
     # create parser for command-line arguments
     parser = argparse.ArgumentParser(description='AMBER Torsion Optimizer',
                                    formatter_class=SmartFormatter)
-  
+
     parser.add_argument('--prmtop', metavar='filename',
       type=str,
       default="../Datasets/amber/dh_6-7-9-11/prmtop",
