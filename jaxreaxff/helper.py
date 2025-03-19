@@ -5,6 +5,7 @@ Author: Mehmet Cagri Kaymak
 """
 
 import  os
+import jax
 import jax.numpy as jnp
 import numpy as onp
 import time
@@ -21,11 +22,14 @@ from jaxreaxff.inter_list_counter import pool_handler_for_inter_list_count
 from jax_md import dataclasses
 from jax_md.reaxff.reaxff_forcefield import ForceField
 import argparse
+from jax_md.amber.amber_helper import GAFFTYPES
 
 # Since we shouldnt access the private API (jaxlib), create a dummy jax array
 # and get the type information from the array.
-#from jaxlib.xla_extension import ArrayImpl as JaxArrayType
-JaxArrayType = type(jnp.zeros(1))
+# from jaxlib.xla_extension import ArrayImpl as JaxArrayType
+# TODO it's wise to avoid this in situations where another subprocess may call this in a CPU only code
+# it can cause issues with invalid GPU context information being copied to subprocess
+# JaxArrayType = type(jnp.zeros(1))
 
 def build_float_range_checker(min_v, max_v):
   '''
@@ -42,35 +46,58 @@ def build_float_range_checker(min_v, max_v):
     return val
   return range_checker
 
-def get_params(force_field, params_list):
+def get_params(force_field, params_list, ff_type, opt_mode):
   '''
   Get the selected parameters from the force field
   '''
-  res = []
-  for param in params_list:
-    name = param[0]
-    index = param[1]
-    x = getattr(force_field, name)[index]
-    res.append(x)
-  return jnp.array(res)
+  if ff_type == "reaxff":
+    res = []
+    for param in params_list:
+      name = param[0]
+      index = param[1]
+      x = getattr(force_field, name)[index]
+      res.append(x)
+    return jnp.array(res)
+  elif ff_type == "ambereem":
+    res = []
+    for param in params_list:
+      name = param[0]
+      index = param[1]
+      x = getattr(force_field, name)[index]
+      res.append(x)
+    return jnp.array(res)
 
-def set_params(force_field, params_list, params):
+def set_params(force_field, params_list, params, ff_type, opt_mode):
   '''
   Replace the selected parameters in the force field
   '''
-  attr_dict = dict()
-  for i,param in enumerate(params_list):
-    name = param[0]
-    index = param[1]
-    x = getattr(force_field, name)
-    attr_dict[name] = x
-  for i,param in enumerate(params_list):
-    name = param[0]
-    index = param[1]
-    attr_dict[name] = attr_dict[name].at[index].set(params[i])
-  new_ff = dataclasses.replace(force_field, **attr_dict)
-  new_ff = ForceField.fill_off_diag(new_ff)
-  new_ff = ForceField.fill_symm(new_ff)
+  if ff_type == "reaxff":
+    attr_dict = dict()
+    for i,param in enumerate(params_list):
+      name = param[0]
+      index = param[1]
+      x = getattr(force_field, name)
+      attr_dict[name] = x
+    for i,param in enumerate(params_list):
+      name = param[0]
+      index = param[1]
+      attr_dict[name] = attr_dict[name].at[index].set(params[i])
+    new_ff = dataclasses.replace(force_field, **attr_dict)
+    new_ff = ForceField.fill_off_diag(new_ff)
+    new_ff = ForceField.fill_symm(new_ff)
+  elif ff_type == "ambereem":
+    attr_dict = dict()
+    for i,param in enumerate(params_list):
+      name = param[0]
+      index = param[1]
+      x = getattr(force_field, name)
+      attr_dict[name] = x
+    for i,param in enumerate(params_list):
+      name = param[0]
+      index = param[1]
+      attr_dict[name] = attr_dict[name].at[index].set(params[i])
+    new_ff = dataclasses.replace(force_field, **attr_dict)
+
   return new_ff
 
 def split_dataclass(data):
@@ -96,7 +123,7 @@ def filter_dataclass(data, filter_map):
   d_class = data.__class__
   for attr in field_names:
     val = getattr(data, attr)
-    if type(val) in [JaxArrayType, onp.ndarray]:
+    if type(val) in [type(jnp.zeros(1)), onp.ndarray]:
       sel_dict[attr] = val[filter_map]
     # recursive filtering since dataclass might contain other dataclasses
     # as an attribute
@@ -114,7 +141,7 @@ def move_dataclass(obj, target_numpy):
   replace_dict = dict()
   for attr in field_names:
     val = getattr(obj, attr)
-    if type(val) in [JaxArrayType, onp.ndarray]:
+    if type(val) in [type(jnp.zeros(1)), onp.ndarray]:
       replace_dict[attr] = target_numpy.array(val)
     #TODO: if there is self reference, this will cause stack overflow
     if dataclasses.is_dataclass(val):
@@ -401,7 +428,7 @@ def preprocess_trainset_line(line):
   line = line.replace('/', ' / ')
   return line
 
-def read_geo_file(geo_file, name_to_index_map, far_nbr_cutoff):
+def read_geo_file(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
   '''
   Read the geometries from the provided geometry file
   '''
@@ -445,11 +472,17 @@ def read_geo_file(geo_file, name_to_index_map, far_nbr_cutoff):
       atom_names = onp.array(atom_names)
       atomic_nums = onp.zeros(num_atoms, dtype=onp.int32)
       # The rest of the atomic numbers are not important
-      atomic_nums = onp.where(atom_names=="C", 6, atomic_nums)
-      atomic_nums = onp.where(atom_names=="O", 8, atomic_nums)
-      atomic_nums = onp.where(atom_names=="H", 1, atomic_nums)
-      reax_atom_types = [name_to_index_map[name] for name in atom_names]
-      reax_atom_types = onp.array(reax_atom_types)
+      # TODO recording atomic numbers for AMBER probably isn't necessary internally, but double check
+      if ff_type == "reaxff":
+        atomic_nums = onp.where(atom_names=="C", 6, atomic_nums)
+        atomic_nums = onp.where(atom_names=="O", 8, atomic_nums)
+        atomic_nums = onp.where(atom_names=="H", 1, atomic_nums)
+        reax_atom_types = [name_to_index_map[name] for name in atom_names]
+        reax_atom_types = onp.array(reax_atom_types)
+      elif ff_type == "ambereem":
+        #TODO just change this to atom types
+        reax_atom_types = [GAFFTYPES[name.lower()] for name in atom_names]
+        reax_atom_types = onp.array(reax_atom_types)
       atoms_positions = onp.array(atoms_positions)
       # box information
       orth_mat = orthogonalization_matrix(box, box_angles)

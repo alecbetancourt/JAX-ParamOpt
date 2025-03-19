@@ -9,6 +9,7 @@ import os
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
 import jax
 jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_debug_nans", True)
 import jax.profiler
 import jax.numpy as jnp
 import numpy as onp
@@ -37,6 +38,12 @@ from jaxreaxff.helper import (move_dataclass, process_and_cluster_geos,
 import math
 from functools import partial
 from jaxreaxff.helper import build_float_range_checker
+from jaxreaxff.structure_amber import (load_amber_ff_batch, map_params_amber,
+                                       process_and_cluster_geos_amber,
+                                       process_and_cluster_ff_amber,
+                                       align_ff_amber, parse_and_save_force_field_amber)
+from jaxreaxff.helper_prmtop import build_prm_list
+from jax_md.amber.amber_energy_v2 import amber_energy
 
 def main():
   # create parser for command-line arguments
@@ -149,7 +156,33 @@ def main():
       type=int,
       default=0,
       help='Seed value')
-  
+  # AMBER related parameters
+  parser.add_argument('--ff_type', metavar='ff_type',
+      choices=['reaxff', 'amber', 'ambereem'],
+      type=str,
+      default='reaxff',
+      help='Forcefield to optimize - "reaxff" or "amber" or "ambereem"')
+  parser.add_argument('--ffq_params', metavar='filename',
+      type=str,
+      default="ffq_params",
+      help='Supplemental parameter file for FFQ if AMBER is enabled')
+  parser.add_argument('--opt_mode', metavar='mode',
+      choices=['single', 'group'],
+      type=str,
+      default="group",
+      help='For AMBER, determines optimization type\n' +
+           'single - optimization is for a single system\n' +
+           'group - optimization is done for a group of files that\n' +
+           'share common parameters defined in the params file')
+  parser.add_argument('--min_type', metavar='min_type',
+      choices=['grad', 'dlfind', 'bfgs'],
+      type=str,
+      default='grad',
+      help='Method to use for energy minimization - "grad" or "dlfind" or "bfgs"\n' +
+           '"dlfind" uses internal coordinates and calls libdlfind library' +
+           '"grad" uses gradient descent internally to optimize structures' +
+           '"bfgs" uses Scipy L-BFGS-B to optimize strucutres')
+
   #parse arguments
   args = parser.parse_args()
   # TODO: remove
@@ -166,20 +199,39 @@ def main():
                    "perc_width_rest_search":0.15,                      # width of the restricted parameter search after iteration > rest_search_start
                    }
   
+  if args.ff_type == "reaxff" and not args.min_type == "grad":
+    print("[ERROR] Only currently supported geometry optimization for ReaxFF is grad")
+    sys.exit()
+  elif args.ff_type == "ambereem" and not args.min_type == "dlfind":
+    print("[ERROR] Only currently supported geometry optimization for ReaxFF is dlfind")
+    sys.exit()
+
   onp.random.seed(args.seed)
   TYPE = jnp.float64
   # read the initial force field
-  force_field = read_force_field(args.init_FF, cutoff2 = args.cutoff2, dtype=TYPE)
-  force_field = ForceField.fill_off_diag(force_field)
-  force_field = ForceField.fill_symm(force_field)
+  if args.ff_type == "reaxff":
+    force_field = read_force_field(args.init_FF, cutoff2 = args.cutoff2, dtype=TYPE)
+    force_field = ForceField.fill_off_diag(force_field)
+    force_field = ForceField.fill_symm(force_field)
+    ffq_ff = None
+  elif args.ff_type == "amber":
+    print("[ERROR] Normal AMBER not implemented yet")
+    sys.exit()
+  elif args.ff_type == "ambereem":
+    f_list = build_prm_list(args.geo, args.init_FF)
+    force_fields, ffq_ff = load_amber_ff_batch(f_list, args.ffq_params, args.ff_type, dtype=TYPE)
   
   # print INFO
-  print("[INFO] Force field field is read")
+  print("[INFO] Force field is read")
   ###########################################################################
   #read the paramemters to be optimized
-  params_list_orig = read_parameter_file(args.params, ignore_sensitivity=0)
-  params_list = map_params(params_list_orig, force_field.params_to_indices)
-  
+  if args.ff_type == "reaxff":
+    params_list_orig = read_parameter_file(args.params, ignore_sensitivity=0)
+    params_list = map_params(params_list_orig, force_field.params_to_indices)
+  elif args.ff_type == "ambereem":
+    params_list_orig = read_parameter_file(args.params, ignore_sensitivity=0)
+    params_list = map_params_amber(params_list_orig)
+
   # preprocess params
   param_indices=[]
   for par in params_list:
@@ -196,7 +248,10 @@ def main():
   
   
   # read the geo file
-  systems = read_geo_file(args.geo, force_field.name_to_index, 10.0)
+  if args.ff_type == "reaxff":
+    systems = read_geo_file(args.geo, force_field.name_to_index, args.ff_type)
+  elif args.ff_type == "ambereem":
+    systems = read_geo_file(args.geo, None, args.ff_type)
   
   training_data = read_train_set(args.train_file)
   # default value for the valid. data
@@ -204,7 +259,10 @@ def main():
   systems_tr, training_data = filter_data(systems, training_data)
   # read and process the validation data if used
   if args.use_valid:
-    print("[INFO] Validation data is provided!")
+    #print("[INFO] Validation data is provided!")
+    #TODO fix this when testing data becomes available
+    print("[ERROR] Validation data is not yet supported")
+    sys.exit()
     systems_valid = read_geo_file(args.valid_geo_file, force_field.name_to_index, 10.0)
     validation_data = read_train_set(args.valid_file)
     systems_valid, validation_data = filter_data(systems_valid, validation_data)
@@ -226,27 +284,34 @@ def main():
       s = dataclasses.replace(s, name = geo_name_to_index[s.name])
       systems[i] = s
   
-  
-  ###########################################################################
-  num_threads = os.cpu_count()    
-  [globally_sorted_indices, 
-   all_cut_indices, 
-   center_sizes] = process_and_cluster_geos(systems, force_field,
-                                            max_num_clusters=args.max_num_clusters, 
-                                            num_threads=num_threads, 
-                                            chunksize=4,
-                                            close_cutoff=args.bonded_cutoff, far_cutoff=10.0)
-  for i in range(len(center_sizes)):
-      for k in center_sizes[i].keys():
-          if k in DYNAMIC_INTERACTION_KEYS:
-            multip = 1.5
-            # give extra buffer room if we need to e. minim
-            if (k in ['filter3_size', 'filter4_size'] 
-                and args.num_e_minim_steps > 0):
-              multip = 2.0
-            center_sizes[i][k] = math.ceil(multip * center_sizes[i][k])
-          if center_sizes[i][k] == 0:
-              center_sizes[i][k] = 1
+  if args.ff_type == "reaxff":
+    num_threads = os.cpu_count()    
+    [globally_sorted_indices, 
+    all_cut_indices, 
+    center_sizes] = process_and_cluster_geos(systems, force_field,
+                                              max_num_clusters=args.max_num_clusters, 
+                                              num_threads=num_threads, 
+                                              chunksize=4,
+                                              close_cutoff=args.bonded_cutoff, far_cutoff=10.0)
+    for i in range(len(center_sizes)):
+        for k in center_sizes[i].keys():
+            if k in DYNAMIC_INTERACTION_KEYS:
+              multip = 1.5
+              # give extra buffer room if we need to e. minim
+              if (k in ['filter3_size', 'filter4_size'] 
+                  and args.num_e_minim_steps > 0):
+                multip = 2.0
+              center_sizes[i][k] = math.ceil(multip * center_sizes[i][k])
+            if center_sizes[i][k] == 0:
+                center_sizes[i][k] = 1
+  elif args.ff_type == "ambereem":
+    #batch_size = 3 # TODO temp
+    batch_size = int(os.environ.get("SLURM_NTASKS", "1"))
+    # TODO print batch size and other information about detected setup at top of file
+    # also implement better clustering, this is just a placeholder
+    # also make sure max num clusters is respected
+    [all_cut_indices, 
+    center_sizes] = process_and_cluster_geos_amber(systems, batch_size=batch_size, dtype=TYPE)
   
   aligned_data = []
   for i in range(len(center_sizes)):
@@ -254,51 +319,80 @@ def main():
       zz = move_dataclass(zz, jnp)
       aligned_data.append(zz)
   
-  force_field = move_dataclass(force_field, jnp)
-  
-  batched_allocate = reaxff_interaction_list_generator(force_field,
-                                                       close_cutoff = args.bonded_cutoff,
-                                                       far_cutoff = 10.0,
-                                                       use_hbond=True)
-  
-  allocate_func = jax.jit(batched_allocate,static_argnums=(3,))
+  if args.ff_type == "reaxff":
+    force_field = move_dataclass(force_field, jnp)
+  elif args.ff_type == "ambereem":
+    all_cut_indices_ff, center_sizes_ff = process_and_cluster_ff_amber(force_fields, batch_size=batch_size, dtype=TYPE)
+    # TODO should move ff generation to onp
+    aligned_ff = []
+    for i in range(len(center_sizes_ff)):
+      zz = align_ff_amber([force_fields[i] for i in all_cut_indices_ff[i]], center_sizes_ff[i], TYPE)
+      zz = move_dataclass(zz, jnp)
+      aligned_ff.append(zz)
+
+    force_field = aligned_ff # TODO consider if there should just be different code paths for this
+
+  if args.ff_type == "reaxff":
+    batched_allocate = reaxff_interaction_list_generator(force_field,
+                                                        close_cutoff = args.bonded_cutoff,
+                                                        far_cutoff = 10.0,
+                                                        use_hbond=True)
+    
+    allocate_func = jax.jit(batched_allocate,static_argnums=(3,))
+  elif args.ff_type == "ambereem":
+    # TODO this may be necessary to implement depending on how i want to
+    # detach neighbor and other generation in the future
+    allocate_func = lambda *args: None # or use an empty lambda
+
   center_sizes = [frozendict(c) for c in center_sizes]   
   
   list_positions = [s.positions for s in aligned_data]
 
-  get_params_jit = jax.jit(get_params,static_argnums=(1,))
-  set_params_jit = jax.jit(set_params,static_argnums=(1,))
+  get_params_jit = jax.jit(get_params,static_argnums=(1,2,3))
+  set_params_jit = jax.jit(set_params,static_argnums=(1,3,4))
   
   force_f = jax.jit(jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
                                             has_aux=True),
-                         in_axes=(0,0,0, None)))
+                         in_axes=(0,0,0, 0, None, None)), static_argnames=("ff_type"))
   
   minimize_kwargs = {"allocate_func":allocate_func, "force_func":force_f,
                      "init_LR":args.e_minim_LR, "minim_steps":args.num_e_minim_steps
-                     , "target_RMSG":args.end_RMSG}
+                     , "target_RMSG":args.end_RMSG, "ff_type":args.ff_type}
   minim_func = partial(energy_minimize, **minimize_kwargs)
   
-  
-  loss_and_grad_func = jax.jit(jax.value_and_grad(calculate_loss), 
-                               static_argnames=('return_indiv_error',))
-  loss_func = jax.jit(calculate_loss, static_argnames=('return_indiv_error',))
+  if args.ff_type == "reaxff":
+    loss_and_grad_func = jax.jit(jax.value_and_grad(calculate_loss, allow_int=True), # TODO consider if this is safe or how cagri avoided using this
+                                static_argnames=('return_indiv_error','ff_type')) # TODO should this include ff_type?
+  elif args.ff_type == "ambereem":
+    loss_and_grad_func = jax.jit(jax.value_and_grad(calculate_loss, argnums=7, allow_int=True),
+                                static_argnames=('return_indiv_error','ff_type'))
+  loss_func = jax.jit(calculate_loss, static_argnames=('return_indiv_error','ff_type'))
   
   
   def new_loss_and_grad_func(params, param_indices,
                              force_field, training_data,
-                             list_positions, aligned_data, center_sizes):
+                             list_positions, aligned_data, center_sizes, ff_type, opt_mode, ffq_ff):
     params = jnp.array(params)
-    force_field = set_params_jit(force_field, param_indices, params)
-    all_inters = [allocate_func(list_positions[i], aligned_data[i], 
+    if ff_type == "reaxff":
+      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
+    elif ff_type == "ambereem":
+      ffq_ff = set_params_jit(ffq_ff, param_indices, params, ff_type, opt_mode)
+    if ff_type == "reaxff":
+      all_inters = [allocate_func(list_positions[i], aligned_data[i], 
                                 force_field, center_sizes[i])[0] 
                   for i in range(len(center_sizes))]
+    elif ff_type == "ambereem":
+      all_inters = []
     loss, grads_ff = loss_and_grad_func(force_field,
                                         list_positions,
                                         aligned_data,
                                         all_inters,
-                                        training_data)
+                                        training_data,
+                                        False,
+                                        ff_type,
+                                        ffq_ff)
   
-    grads = get_params_jit(grads_ff, param_indices)
+    grads = get_params_jit(grads_ff, param_indices, ff_type, opt_mode)
     loss = onp.asarray(loss,dtype=onp.float64)
     grads = onp.asarray(grads,dtype=onp.float64)
   
@@ -306,19 +400,27 @@ def main():
   
   def new_loss_func(params, param_indices,
                     force_field, training_data,
-                    list_positions, aligned_data, center_sizes,
+                    list_positions, aligned_data, center_sizes, ff_type, opt_mode, ffq_ff,
                     return_indiv_error = False):
     params = jnp.array(params)
-    force_field = set_params_jit(force_field, param_indices, params)
-    all_inters = [allocate_func(list_positions[i], aligned_data[i], 
-                                force_field, center_sizes[i])[0] 
-                  for i in range(len(center_sizes))]
+    if ff_type == "reaxff":
+      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
+    elif ff_type == "ambereem":
+      ffq_ff = set_params_jit(ffq_ff, param_indices, params, ff_type, opt_mode)
+    if ff_type == "reaxff":
+      all_inters = [allocate_func(list_positions[i], aligned_data[i], 
+                                  force_field, center_sizes[i])[0] 
+                    for i in range(len(center_sizes))]
+    elif ff_type == "ambereem":
+      all_inters = []
     results = loss_func(force_field,
                     list_positions,
                     aligned_data,
                     all_inters,
                     training_data,
-                    return_indiv_error)
+                    return_indiv_error,
+                    ff_type,
+                    ffq_ff)
     if return_indiv_error:
       loss, indiv_errors = results
     else:
@@ -327,8 +429,12 @@ def main():
     if return_indiv_error:
       return loss, indiv_errors
     return loss
-  
-  init_params = get_params(force_field, param_indices)
+  if args.ff_type == "reaxff":
+    init_params = get_params(force_field, param_indices, args.ff_type, args.opt_mode)
+  elif args.ff_type == "ambereem":
+    init_params = get_params(ffq_ff, param_indices, args.ff_type, args.opt_mode)
+
+  init_params = jnp.squeeze(init_params) # TODO figure out why this isn't necessary for cagri's code
   init_params = onp.array(init_params)
   
   
@@ -368,7 +474,7 @@ def main():
                            validation_data,
                            num_steps, e_minim_flag, opt_method, optim_options,
                            advanced_opts,
-                           new_loss_and_grad_func, minim_func, allocate_func)
+                           new_loss_and_grad_func, minim_func, allocate_func, args.ff_type, args.opt_mode, ffq_ff)
     end = time.time()
   
     result = {"time":end-start, "value": global_min, 
@@ -401,30 +507,36 @@ def main():
     params = res['params']
     current_loss = res['value']
     unique_id = res['unique_id']
-    force_field = set_params_jit(force_field, param_indices, params)
+    if args.ff_type == "reaxff":
+      force_field = set_params_jit(force_field, param_indices, params, args.ff_type, args.opt_mode)
+    elif args.ff_type == "ambereem":
+      ffq_ff = set_params_jit(ffq_ff, param_indices, params, args.ff_type, args.opt_mode)
     if e_minim_flag:
       minim_start = time.time()
       [list_positions, cur_total_energy,
       center_sizes, cur_RMSG_vals] = minim_func(aligned_data,
                                                 center_sizes,
-                                                force_field)
+                                                force_field,
+                                                ffq_ff=ffq_ff,
+                                                ff_type=args.ff_type)
       minim_end = time.time()
     else:
-      # extend the interaction list sizes if needed
-      for i in range(len(aligned_data)):
-        sub_nbr = allocate_func(list_positions[i], aligned_data[i],
-                                   force_field, center_sizes[i])[0]
-        if jnp.any(sub_nbr.did_buffer_overflow):
-          center_sizes[i] = update_inter_sizes(list_positions[i],
-                                                   aligned_data[i],
-                                                   force_field,
-                                                   center_sizes[i],
-                                                   multip=1.5)
+      if args.ff_type == "reaxff":
+        # extend the interaction list sizes if needed
+        for i in range(len(aligned_data)):
+          sub_nbr = allocate_func(list_positions[i], aligned_data[i],
+                                    force_field, center_sizes[i])[0]
+          if jnp.any(sub_nbr.did_buffer_overflow):
+            center_sizes[i] = update_inter_sizes(list_positions[i],
+                                                    aligned_data[i],
+                                                    force_field,
+                                                    center_sizes[i],
+                                                    multip=1.5)
   
     loss, indiv_errors = new_loss_func(params, param_indices,
                                       force_field, training_data,
                                       list_positions, aligned_data,
-                                      center_sizes,
+                                      center_sizes, args.ff_type, args.opt_mode, ffq_ff,
                                       True)
     for k in indiv_errors.keys():
       # move data to regular numpy arrays
@@ -433,8 +545,13 @@ def main():
     loss = float(loss)
     loss_str = str(round(loss))
     new_name = "{}/new_FF_{}_{}".format(args.out_folder,unique_id,loss_str)
-    new_force_field = move_dataclass(force_field, onp)
-    parse_and_save_force_field(args.init_FF, new_name, new_force_field)
+    if args.ff_type == "reaxff":
+      new_force_field = move_dataclass(force_field, onp)
+      parse_and_save_force_field(args.init_FF, new_name, new_force_field)
+    elif args.ff_type == "ambereem":
+      ffq_name = "{}/ffq_params_{}_{}.dat".format(args.out_folder,unique_id,loss_str)
+      new_force_field = move_dataclass(force_field[0], onp)
+      parse_and_save_force_field_amber(f_list, new_force_field, args.ffq_params, ffq_name)
   
     report_name = "{}/report_{}_{}.txt".format(args.out_folder,unique_id,loss_str)
     produce_error_report(report_name, training_data, indiv_errors, geo_index_to_name)
@@ -445,7 +562,7 @@ def main():
        valid_indiv_errors] = new_loss_func(params, param_indices,
                                         force_field, validation_data,
                                         list_positions, aligned_data,
-                                        center_sizes,
+                                        center_sizes, args.ff_type, args.opt_mode,
                                         True)
       for k in valid_indiv_errors.keys():
         # move data to regular numpy arrays

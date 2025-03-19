@@ -32,13 +32,21 @@ cuda_version = "cuda{}".format(cuda_version.replace(".",""))
 #TODO: Automate installation for cuda dependent jaxlib
 '''
 
-INSTALL_REQUIRES = [
+'''
   'jax>=0.4.26, <=0.4.30',
   'jaxlib>=0.4.26,<=0.4.30',
   'jax_md @ git+https://github.com/cagrikymk/jax-md.git@reaxff_dev#egg=jax_md',
-  'numba>=0.56',
-  'numpy',
   'scipy>=1.2.1,<=1.12.0',
+  'numpy',
+  'numba>=0.56', # this needs to be figured out at some point, numba only supports old numpy version
+  # as a note here, ideally pin these to tight version ranges and implement CI testing for a few different versions at a time
+  # e.g. universal cuda 11 config, universal cuda 12 config
+'''
+
+INSTALL_REQUIRES = [
+  'jax',
+  'jaxlib',
+  'scipy',
   'tabulate>=0.8.9',
   'frozendict',
   'tqdm',

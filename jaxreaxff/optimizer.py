@@ -7,7 +7,7 @@ Includes steepest descent-like energy minimizer (with dynamic LR)
 
 Author: Mehmet Cagri Kaymak
 """
-
+# TODO fix the order and organization of these imports
 import numpy as onp
 import jax.numpy as jnp
 import jax
@@ -15,7 +15,7 @@ import time
 import copy
 from scipy.optimize import minimize
 from jax_md.reaxff.reaxff_interactions import calculate_angle
-from jax_md.dataclasses import replace
+from jax_md.dataclasses import replace, fields
 from jax_md.util import safe_mask
 from jax_md.reaxff.reaxff_forcefield import ForceField
 from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
@@ -27,6 +27,20 @@ import os
 import logging
 import math
 from jaxreaxff.interactions import DYNAMIC_INTERACTION_KEYS
+import time
+from jax_md.amber.amber_energy_v2 import amber_energy
+from libdlfind import dl_find
+from libdlfind.callback import (dlf_get_gradient_wrapper,
+                                dlf_put_coords_wrapper, make_dlf_get_params)
+import functools
+import sys
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from flax.serialization import to_bytes, from_bytes
+import subprocess
+import pickle
+from frozendict import frozendict
+from jax_md.amber.amber_forcefield import AmberForceField, FFQForceField
+from jaxreaxff.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
 
 rdndgr = 180.0/onp.pi
 dgrrdn = 1.0/rdndgr
@@ -152,36 +166,61 @@ def calculate_torsion_restraint_energy(positions, structure):
 def calculate_energy_and_charges(positions,
                                  structure,
                                  nbr_lists,
-                                 force_field):
+                                 force_field,
+                                 ff_type,
+                                 ffq_ff): # TODO a better way of doing this might be to bundle it in as part of a dict with opt mode and ff type
+                                          # also consider using kwargs more like in jax md code for things like this
   '''
   Calculate energy and charges for a given system
   '''
 
-  # handle off diag. and symm. in the force field
-  force_field = ForceField.fill_off_diag(force_field)
-  force_field = ForceField.fill_symm(force_field)
+  if ff_type == "reaxff":
+    # handle off diag. and symm. in the force field
+    force_field = ForceField.fill_off_diag(force_field)
+    force_field = ForceField.fill_symm(force_field)
 
-  dists_and_angles = calculate_dist_and_angles(positions,
-                                               structure,
-                                               nbr_lists)
-  # set max_solver_iter to -1 to use direct solve (LU based)
-  energy, charges =  calculate_reaxff_energy(structure.atom_types,
-                              structure.atomic_nums,
-                              nbr_lists,
-                              *dists_and_angles,
-                              force_field,
-                              total_charge = structure.total_charge,
-                              tol= 1e-06,
-                              backprop_solve = True,
-                              tors_2013 = False,
-                              solver_model = "EEM",
-                              max_solver_iter=-1)
+    dists_and_angles = calculate_dist_and_angles(positions,
+                                                structure,
+                                                nbr_lists)
+    # set max_solver_iter to -1 to use direct solve (LU based)
+    energy, charges =  calculate_reaxff_energy(structure.atom_types,
+                                structure.atomic_nums,
+                                nbr_lists,
+                                *dists_and_angles,
+                                force_field,
+                                total_charge = structure.total_charge,
+                                tol= 1e-06,
+                                backprop_solve = True,
+                                tors_2013 = False,
+                                solver_model = "EEM",
+                                max_solver_iter=-1)
+  elif ff_type == "ambereem":
+    # TODO placeholder until functions are separated into
+    # eventually setup, interactions/distance (returns nrg/nbr), dynamics (returns body fn/state)
+    # also separate interactions and nrg that don't require passing functions through nested functions
+    # but first
+    # setup (returns ff) and separete interactions and energy func, also decouple neighbor list from nrg fn args
+
+    nrg_fn, amber_ff, body_fn, state = amber_energy(ff=force_field, nonbonded_method="NoCutoff",
+                                                charge_method="FFQ", ensemble=None,
+                                                timestep=1e-3, init_temp=1e-3, return_charges=True, ffq_ff=ffq_ff, backprop_solve=True)
+
+    energy, charges = nrg_fn(positions/10, force_field, None)
+  elif ff_type == "amber":
+    nrg_fn, amber_ff, body_fn, state = amber_energy(ff=force_field, nonbonded_method="NoCutoff",
+                                                charge_method="GAFF", ensemble=None,
+                                                timestep=1e-3, init_temp=1e-3, return_charges=True, ffq_ff=ffq_ff, backprop_solve=True)
+
+    energy, charges = nrg_fn(positions/10, force_field, None)
+
   return energy, charges
 
 def calculate_energy_and_charges_w_rest(positions,
                                  structure,
                                  nbr_lists,
-                                 force_field):
+                                 force_field,
+                                 ff_type,
+                                 ffq_ff):
   '''
   Calculate energy and charges for a given system while inclding the restraints
   '''
@@ -189,7 +228,10 @@ def calculate_energy_and_charges_w_rest(positions,
   energy, charges = calculate_energy_and_charges(positions,
                                    structure,
                                    nbr_lists,
-                                   force_field)
+                                   force_field,
+                                   ff_type,
+                                   #"amber",
+                                   ffq_ff)
   bond_rest_en = calculate_bond_restraint_energy(positions, structure)
   angle_rest_en = calculate_angle_restraint_energy(positions, structure)
   torsion_rest_en = calculate_torsion_restraint_energy(positions, structure)
@@ -202,17 +244,25 @@ def calculate_loss(force_field,
                     list_structure,
                     list_nbr_lists,
                     training_data,
-                    return_indiv_error=False):
+                    return_indiv_error=False,
+                    ff_type="reaxff",
+                    ffq_ff=None):
   '''
   Calculate the loss function
   '''
   # create a dictionary to return individual erros if needed
   all_indiv_errors = dict()
   # Required functions for potential energy and force calculations
-  pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,None))
-  pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
-                                            has_aux=True),
-                         in_axes=(0,0,0,None))
+  if ff_type == "reaxff":
+    pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,None,None,None))
+    pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
+                                              has_aux=True),
+                          in_axes=(0,0,0,None,None,None))
+  elif ff_type == "ambereem":
+    pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,0,None,None))
+    pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
+                                              has_aux=True),
+                          in_axes=(0,0,0,0,None,None))
 
   dtype = list_positions[0].dtype
 
@@ -243,11 +293,19 @@ def calculate_loss(force_field,
 
   # evaluate the required observables
   for i in range(len(list_structure)):
+    if ff_type == "reaxff":
+      list_nbr = list_nbr_lists[i]
+      ff = force_field
+    elif ff_type == "ambereem":
+      list_nbr = []
+      ff = force_field[i]
     if force_flag:
       (energy, charges), forces = pot_w_force_f(list_positions[i],
                                                 list_structure[i],
-                                                list_nbr_lists[i],
-                                                force_field)
+                                                list_nbr,
+                                                ff,
+                                                ff_type,
+                                                ffq_ff)
       all_forces = all_forces.at[list_structure[i].name,
                                  :atom_counts[i],
                                  :].set(forces)
@@ -255,8 +313,14 @@ def calculate_loss(force_field,
     else:
       energy, charges = pot_f(list_positions[i],
                                 list_structure[i],
-                                list_nbr_lists[i],
-                                force_field)
+                                list_nbr,
+                                ff,
+                                ff_type,
+                                ffq_ff)
+      # TODO also do some runs under a few situations with config.update("jax_debug_nans") or JAX_DEBUG_NANS=True
+      # the issue with nan values propogating to gradients from masked indices is still a consideration
+      # TODO should add in some kind of test for loss/force gradients at some point
+      # if jnp.any(jnp.isnan/isinf/whatever else) -> error
 
     charges = charges[:, :atom_counts[i]]
     all_energy = all_energy.at[list_structure[i].name].set(energy)
@@ -406,8 +470,6 @@ def update_inter_sizes(positions, structures, force_field,
       max_sizes[k] = max(max_sizes[k], s[k])
   return frozendict(max_sizes)
 
-
-
 @jax.jit
 def calculate_RMSG(grads, atom_counts):
   '''
@@ -417,19 +479,211 @@ def calculate_RMSG(grads, atom_counts):
                   (atom_counts.reshape(-1) * 3))
 
 
+def subprocess_init():
+    os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Completely hide GPUs in subprocess
+    os.environ['JAX_PLATFORM_NAME'] = 'cpu'  # Force JAX CPU backend explicitly
+    os.environ["JAX_PLATFORMS"] = "cpu"      # Enforce JAX CPU-only backend
+
+    # Import JAX only after setting these env vars
+    global jax, jnp
+    import jax
+    import jax.numpy as jnp
+
+### Serialization helpers - partially adapted from flax.serialization
+
+# Map of dataclass name to actual class for reconstruction
+DATACLASS_REGISTRY = {"AmberForceField": AmberForceField, "Structure":Structure, "FFQForceField": FFQForceField,
+              "BondRestraint": BondRestraint, "AngleRestraint": AngleRestraint, "TorsionRestraint": TorsionRestraint}
+
+def to_serializable(x):
+  if isinstance(x, jax.Array):
+      return onp.array(x)  # safely converts to numpy
+  elif isinstance(x, frozendict):
+      return {"__frozendict__": True, "data": {k: to_serializable(v) for k, v in x.items()}}
+  elif isinstance(x, dict):
+      return {k: to_serializable(v) for k, v in x.items()}
+  elif isinstance(x, (list, tuple)):
+      return [to_serializable(v) for v in x]
+  elif hasattr(x, '__dataclass_fields__'):
+      return {
+          "__dataclass__": type(x).__name__,
+          "data": {k: to_serializable(getattr(x, k)) for k in x.__dataclass_fields__}
+      }
+  else:
+      return x  # primitives
+
+def serialize_dataclass(dc, filename):
+  pytree_serializable = to_serializable(dc)
+  with open(filename, "wb") as f:
+      pickle.dump(pytree_serializable, f)
+
+def from_serializable(x):
+  if isinstance(x, dict):
+    if "__frozendict__" in x:
+      return frozendict({k: from_serializable(v) for k, v in x["data"].items()})
+    elif "__dataclass__" in x:
+      cls = DATACLASS_REGISTRY[x["__dataclass__"]]
+      fields = {k: from_serializable(v) for k, v in x["data"].items()}
+      return cls(**fields)
+    else:
+      return {k: from_serializable(v) for k, v in x.items()}
+  elif isinstance(x, list):
+    return [from_serializable(v) for v in x]
+  elif isinstance(x, np.ndarray):
+    return jnp.asarray(x)
+  else:
+    return x  # primitives
+
+def deserialize_dataclass(filename):
+  with open(filename, "rb") as f:
+    pytree_loaded = pickle.load(f)
+  return from_serializable(pytree_loaded)
+
+def serialize_numpy(arr, filename):
+  onp.save(filename, arr)
+
+def deserialize_numpy(filename):
+  return onp.load(filename)
+
+def run_subprocess(coords, structs, force_fields, ffq_ff, minim_steps, idx):
+  coords_file = f"./tmp/coords_{idx}.npy"
+  structs_file = f"./tmp/structs_{idx}.pkl"
+  force_fields_file = f"./tmp/force_fields_{idx}.pkl"
+  ffq_ff_file = f"./tmp/ffq_ff_{idx}.pkl"
+  out_coord_file = f"./tmp/out_coord_{idx}.npy"
+  out_energy_file = f"./tmp/out_energy_{idx}.npy"
+  out_grad_file = f"./tmp/out_grad_{idx}.npy"
+
+  # Serialize inputs
+  serialize_numpy(coords, coords_file)
+  serialize_dataclass(structs, structs_file)
+  serialize_dataclass(force_fields, force_fields_file)
+  serialize_dataclass(ffq_ff, ffq_ff_file)
+
+  # Launch subprocess explicitly
+  script_path = os.path.abspath(__file__)
+  script_directory = os.path.dirname(script_path)
+  python_executable = sys.executable
+
+  subprocess.run([
+      python_executable, script_directory + "/dlfind.py",
+      coords_file, structs_file, force_fields_file, ffq_ff_file, out_coord_file, out_energy_file, out_grad_file, str(minim_steps)
+  ], stdout=subprocess.DEVNULL)
+
+  # Load result
+  out_coord = onp.load(out_coord_file)
+  out_energy = onp.load(out_energy_file)
+  out_grad = onp.load(out_grad_file)
+
+  # Clean up files
+  os.remove(coords_file)
+  os.remove(structs_file)
+  os.remove(force_fields_file)
+  os.remove(ffq_ff_file)
+  os.remove(out_coord_file)
+  os.remove(out_energy_file)
+  os.remove(out_grad_file)
+
+  return out_coord, out_energy, out_grad
+
+def dlfind_opt(list_structure,
+                center_sizes, force_field, ffq_ff,
+                allocate_func, force_func, ff_type,
+                init_LR = 0.001,
+                minim_steps = 100,
+                target_RMSG = 1.0):
+  '''
+  Perform geometry optimization using callback to DL FIND library
+
+  Args:
+
+  Returns:
+
+  '''
+  sub_filter = [data.energy_minimize for data in list_structure]
+  list_sub_structure = [filter_dataclass(data, sub_filter[i])
+                            for i, data in enumerate(list_structure)]
+
+  list_sub_structure = list_structure
+  
+  dtype = list_structure[0].positions.dtype
+  list_pos = [s.positions for s in list_structure]
+  list_sub_cur_pos = [s.positions for s in list_sub_structure]
+
+  cur_center_sizes = list(center_sizes)
+  cur_loss_vals = [0] * len(center_sizes)
+
+  full_RMSG_vals = [jnp.zeros_like(l.energy_minimize, dtype=dtype)
+                  for l in list_structure]
+
+  for i in range(len(center_sizes)):
+    batch_size = list_sub_cur_pos[i].shape[0]
+
+    coords_list = [jnp.array(list_sub_cur_pos[i][j]) for j in range(batch_size)] # TODO onp for these three?
+    struct_list = [
+      #move_dataclass(jax.tree_util.tree_map(lambda x: x[j], list_sub_structure[i]), onp)
+      jax.tree_util.tree_map(lambda x: x[j], list_sub_structure[i])
+      for j in range(batch_size)
+    ]
+    ff_list = [
+      #move_dataclass(jax.tree_util.tree_map(lambda x: x[j], force_field[i]), onp)
+      jax.tree_util.tree_map(lambda x: x[j], force_field[i])
+      for j in range(batch_size)
+    ]
+
+    optimized_coords_list = []
+    num_tasks = int(os.environ.get("SLURM_NTASKS", "1"))
+    with ThreadPoolExecutor(max_workers=num_tasks) as executor:
+      futures = [
+        executor.submit(run_subprocess, coords_list[i], struct_list[i], ff_list[i], ffq_ff, minim_steps, i)
+        for i in range(batch_size)
+      ]
+      results = [future.result() for future in futures]
+
+    traj_coordinates, traj_energies, final_grad = zip(*results)
+    traj_coordinates = jnp.stack(traj_coordinates) # TODO onp or jnp? had as onp originally
+    traj_energies = jnp.stack(traj_energies)
+    final_grad = jnp.stack(final_grad)
+
+    # TODO add option to print individual RMSG and energies
+    # particularly important when some structures aren't optimized
+    # they will have disproportionately high energy/RMSG
+    # print("RMSG", jax.jit(calculate_RMSG)(final_grad, list_sub_structure[i].atom_count))
+
+    list_sub_cur_pos[i] = traj_coordinates
+    cur_loss_vals[i] = jnp.sum(traj_energies)
+    cur_RMSG = jax.jit(calculate_RMSG)(final_grad, list_sub_structure[i].atom_count)
+    full_RMSG_vals[i] = full_RMSG_vals[i].at[list_structure[i].energy_minimize].set(cur_RMSG)
+
+  cur_total_loss = sum(cur_loss_vals)
+  for i in range(len(list_pos)):
+    if len(list_sub_structure[i].energy_minimize) > 0:
+      list_pos[i] = list_pos[i].at[list_structure[i].energy_minimize].set(list_sub_cur_pos[i])
+  return list_pos, cur_total_loss, cur_center_sizes, full_RMSG_vals
+
+
 def energy_minimize(list_structure,
-                    center_sizes, force_field,
-                    allocate_func, force_func,
+                    center_sizes, force_field, ffq_ff,
+                    allocate_func, force_func, ff_type,
                     init_LR = 0.001,
                     minim_steps = 100,
                     target_RMSG = 1.0):
+  # DL-FIND option
+  if ff_type == "ambereem":
+    [list_pos, cur_total_loss, 
+    cur_center_sizes, full_RMSG_vals] = dlfind_opt(list_structure,
+                    center_sizes, force_field, ffq_ff,
+                    allocate_func, force_func, ff_type,
+                    init_LR, minim_steps, target_RMSG)
+    return list_pos, cur_total_loss, cur_center_sizes, full_RMSG_vals
+  
   '''
   Energy minimize the given structures
   '''
   # select the structures that require energy minimization
   list_sub_structure = [filter_dataclass(data, data.energy_minimize)
                              for data in list_structure]
-  dtype = force_field.gamma.dtype
+  dtype = list_structure[0].positions.dtype # TODO replace this with something else
   # create place holder for LR
   LRs = [jnp.ones_like(l.energy_minimize, dtype=dtype)
               for l in list_sub_structure]
@@ -456,30 +710,36 @@ def energy_minimize(list_structure,
   for iter_c in range(minim_steps):
     for i in range(len(center_sizes)):
       if len(list_sub_structure[i].energy_minimize) > 0 and jnp.any(LRs[i] > 0):
-        sub_nbr, counts = allocate_func(list_sub_cur_pos[i],
-                                        list_sub_structure[i],
-                                        force_field, cur_center_sizes[i])
-        if jnp.any(sub_nbr.did_buffer_overflow):
-          print(f"Interaction list overflow for cluster-{i+1} during energy minimization at step {iter_c + 1}!")
-          new_cluster_center = update_inter_sizes(list_sub_cur_pos[i],
-                                                   list_sub_structure[i],
-                                                   force_field,
-                                                   cur_center_sizes[i],
-                                                   multip=1.5)
-          print("name: old size -> new size")
-          for k in counts.keys():
-            #if cur_center_sizes[i][k] != new_cluster_center[k]:
-            print(f"{k}: {cur_center_sizes[i][k]}->{new_cluster_center[k]}")           
-          cur_center_sizes[i] = new_cluster_center
-          # repopulate the neighbor list since the other one is invalidated
-          sub_nbr = allocate_func(list_sub_cur_pos[i],
+        if ff_type == "reaxff":
+          sub_nbr, counts = allocate_func(list_sub_cur_pos[i],
                                           list_sub_structure[i],
-                                          force_field, cur_center_sizes[i])[0]
+                                          force_field, cur_center_sizes[i])
+          if jnp.any(sub_nbr.did_buffer_overflow):
+            print(f"Interaction list overflow for cluster-{i+1} during energy minimization at step {iter_c + 1}!")
+            new_cluster_center = update_inter_sizes(list_sub_cur_pos[i],
+                                                    list_sub_structure[i],
+                                                    force_field,
+                                                    cur_center_sizes[i],
+                                                    multip=1.5)
+            print("name: old size -> new size")
+            for k in counts.keys():
+              #if cur_center_sizes[i][k] != new_cluster_center[k]:
+              print(f"{k}: {cur_center_sizes[i][k]}->{new_cluster_center[k]}")           
+            cur_center_sizes[i] = new_cluster_center
+            # repopulate the neighbor list since the other one is invalidated
+            sub_nbr = allocate_func(list_sub_cur_pos[i],
+                                            list_sub_structure[i],
+                                            force_field, cur_center_sizes[i])[0]
+        elif ff_type == "ambereem":
+          sub_nbr = []
+          ff = force_field[i]
           
         (energy, ch), grads = force_func(list_sub_cur_pos[i],
                                  list_sub_structure[i],
                                  sub_nbr,
-                                 force_field)
+                                 ff,
+                                 ff_type,
+                                 ffq_ff)
 
         cur_loss_vals[i] = jnp.sum(energy)
         cur_RMSG = jax.jit(calculate_RMSG)(grads, list_sub_structure[i].atom_count)
@@ -568,7 +828,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
              validation_data,
              iter_count, e_minim_flag, optimizer, optim_options,
              advanced_opts,
-             loss_and_grad_func, minim_func, allocate_func):
+             loss_and_grad_func, minim_func, allocate_func, ff_type, opt_mode, ffq_ff):
   '''
   Main parameter optimization routine
   '''
@@ -576,8 +836,8 @@ def train_FF(params, param_indices, param_bounds, force_field,
   prev_true_loss = float('inf')
   global_min = float('inf')
   global_min_params = jnp.array(copy.deepcopy(params))
-  get_params_jit = jax.jit(get_params,static_argnums=(1,))
-  set_params_jit = jax.jit(set_params,static_argnums=(1,))
+  get_params_jit = jax.jit(get_params,static_argnums=(1,2,3))
+  set_params_jit = jax.jit(set_params,static_argnums=(1,3,4))
   total_f_ev = 0
   list_positions = [s.positions for s in list_structure]
   param_lower_flag = False
@@ -597,13 +857,16 @@ def train_FF(params, param_indices, param_bounds, force_field,
       params = global_min_params
       param_lower_flag = True
 
-    force_field = set_params_jit(force_field, param_indices, params)
+    if ff_type == "reaxff":
+      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
+    elif ff_type == "ambereem":
+      ffq_ff = set_params_jit(ffq_ff, param_indices, params, ff_type, opt_mode)
     if e_minim_flag:
       minim_start = time.time()
       [list_positions, cur_total_energy,
       center_sizes, cur_RMSG_vals] = minim_func(list_structure,
                                                 center_sizes,
-                                                force_field)
+                                                force_field, ffq_ff)
       minim_end = time.time()
       print("Energy minimization took {:.4f} sec.".format(minim_end-minim_start))
       print('  Total pot. E: {:.2f} kcal/mol'.format(cur_total_energy))
@@ -614,7 +877,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
                              * s.energy_minim_steps.reshape(-1) > 50)
                      for RMSG, s in zip(cur_RMSG_vals,list_structure)])
         print('  RMSG > {:.1} count:{}'.format(rmsg_limit,count))
-    else:
+    elif ff_type == "reaxff": # TODO change when allocation is implemented for amber
       # extend the interaction list sizes if needed
       for i in range(len(list_structure)):
         sub_nbr, new_c = allocate_func(list_positions[i], list_structure[i],
@@ -638,7 +901,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
     true_train_loss, _ = loss_and_grad_func(params, param_indices,
                                               force_field, training_data,
                                               list_positions, list_structure,
-                                              center_sizes)
+                                              center_sizes, ff_type, opt_mode, ffq_ff)
     true_train_loss = float(true_train_loss)
     # calculate the validation loss
     # if valid. data is available, total loss = valid loss + train loss
@@ -646,7 +909,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
       true_valid_loss, _ = loss_and_grad_func(params, param_indices,
                                             force_field, validation_data,
                                             list_positions, list_structure,
-                                            center_sizes)
+                                            center_sizes, ff_type, opt_mode, ffq_ff)
       true_valid_loss = float(true_valid_loss)
       print("True training loss: {:.2f}".format(true_train_loss))
       print("True validation loss: {:.2f}".format(true_valid_loss))
@@ -671,7 +934,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
     if e < iter_count:
       args = (param_indices,
               force_field, training_data,
-              list_positions, list_structure, center_sizes)
+              list_positions, list_structure, center_sizes, ff_type, opt_mode, ffq_ff)
       min_state = minimize(loss_and_grad_func, params, jac=True, args=args,
                            method=optimizer,
                            bounds=param_bounds,options=optim_options)
