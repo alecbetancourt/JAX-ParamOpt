@@ -15,7 +15,7 @@ import argparse
 from jaxreaxff.smartformatter import SmartFormatter
 
 from parmedmod import UpdateParmTopCLI
-import os, re
+import os, re, glob, shutil
 
 # make global array for loss
 losses = []
@@ -24,6 +24,7 @@ iteration = 0
 best_loss = jnp.iinfo(jnp.int64).max
 best_params = None
 best_iteration = -1
+best_energy = None # AB: Track the energy for the best iteration.
 
 # Reads json data
 def ReadJsonData(json_path):
@@ -61,6 +62,43 @@ def extractCoordinates(flist):
         coordinates.append(crds/10)
 
     return coordinates
+
+# AB: Clean the outdir folder and save best iteration to the orriginal geo_dir path. 
+def cleanup_and_restore_best(outdir, dest_dir, best_iteration):
+    """
+    Copies the contents of the best iteration folder (iteration_<best_iteration>) from outdir 
+    back to dest_dir, then deletes all iteration folders in outdir.
+    
+    Parameters:
+      outdir: the directory where iteration folders are stored.
+      dest_dir: the destination directory (os.path.dirname(geo_dir)) where the best iteration files should be copied.
+      best_iteration: the iteration number corresponding to the best iteration.
+    """
+    # Define pattern for iteration folders in outdir.
+    pattern = os.path.join(outdir, "iteration_*")
+    iteration_folders = glob.glob(pattern)
+    
+    best_folder = os.path.join(outdir, f"iteration_{best_iteration}")
+    if not os.path.exists(best_folder):
+        print("Best iteration folder not found in outdir!")
+        return
+
+    # Copy all files from best_folder back to dest_dir.
+    for root, dirs, files in os.walk(best_folder):
+        for file in files:
+            src = os.path.join(root, file)
+            # Compute the relative path from best_folder to this file.
+            rel_path = os.path.relpath(src, best_folder)
+            dst = os.path.join(dest_dir, rel_path)
+            # Create destination directories if needed.
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+
+    # Delete all iteration folders (only directories) in outdir.
+    for folder in iteration_folders:
+        if os.path.isdir(folder):
+            shutil.rmtree(folder)
+
 
 def constrained_minimization_vec(crds, prmtop, boxVectors, min_steps, torsions, min_interval):
     radian_to_degree = 180.0/jnp.pi
@@ -333,6 +371,8 @@ def ObjectiveFunction(scipy_params, *args):
     loss_ene, grad = loss_and_grad
     loss, jax_ene_list = loss_ene
     grad = grad.astype('float64')
+    jax_energies = [float(val) for val in jax_ene_list]
+    print("JAX Energies:", jax_energies) # AB: Save JAX energy for each iteration. 
     print("Loss", loss)
     losses.append(loss)
     print("Loss Grad", grad)
@@ -348,25 +388,35 @@ def ObjectiveFunction(scipy_params, *args):
     if iteration == 1:
         gaff_ene_list = relative_ene_list
 
-    plt.plot(range(0,360,10), ref_ene, marker='o', label="Reference")
+    dihedral_label = os.path.basename(os.path.normpath(geo_dir)) # AB: Include dih label in the plot title.
+    
+    # AB: changed color and labels of the plots. 
+    plt.plot(range(0,360,10), ref_ene, marker='o', color='k', label="Reference")
     #plt.plot(range(0,360,10), relative_ene_list, marker='o', label="Sander Energies Post Optimization")
-    plt.plot(range(0,360,10), gaff_ene_list, marker='o', label="Initial Guess")
-    plt.plot(range(0,360,10), jax_ene_list, marker='o', label="Current Guess")
-    plt.title("JAX-AMBER + DLFind Fitting Iteration %s" % iteration)
-    plt.xlabel("Dihedral (Degree)")
-    plt.ylabel("Potential Energy (kcal/mol)")
+    plt.plot(range(0,360,10), gaff_ene_list, marker='o', color='r', label="Standard GAFF2")
+    plt.plot(range(0,360,10), jax_ene_list, marker='o', color='b', label="AFFDO GAFF2")
+    plt.title("JAX-AMBER + DLFind Fitting Iteration %s - %s" % (iteration, dihedral_label))
+    plt.xlabel("Dihedral (degree)")
+    plt.ylabel("Energy (kcal/mol)")
     plt.legend()
     plt.savefig(outdir + "/iteration_%s.png" % iteration)
     plt.close()
+
+    # AB: Copy the entire geo_dir to preserve output files for each iteration.
+    import shutil
+    iteration_folder = os.path.join(outdir, f"iteration_{iteration}")
+    shutil.copytree(os.path.dirname(geo_dir), iteration_folder, dirs_exist_ok=True)
 
     # Update best values if applicable
     global best_loss
     global best_params
     global best_iteration
+    global best_energy
     if loss < best_loss:
         best_loss = loss
         best_params = scipy_params
         best_iteration = iteration
+        best_energy = jax_energies  # AB: Save the energy profile for the best iteration
 
     # scipy requires jac gradient as list
     # print("loss", loss)
@@ -466,6 +516,8 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, amber_dir, min_steps, opt_loops, ref
 
     print("Best Iteration:", best_iteration)
 
+    print("Best Energies:", best_energy) # AB: Print the energy profile corresponding to the best iteration. 
+    
     print("Best Params:", best_params)
 
     print("Final Params: ", minimization_result.x)
@@ -498,6 +550,14 @@ def ff_opt(prmtop_dir, params_dir, geo_dir, amber_dir, min_steps, opt_loops, ref
             i+=1
 
     # SaveJsonData(params_dict, outdir + '/final_params.json')
+
+    # AB: Save best energies to a JSON file. Temporary solution. Move function to jaxextract.py script.  
+    final_energy_dict = {"best_energy": best_energy}
+    SaveJsonData(final_energy_dict, 'energies.json')
+
+    # AB: Save the output files corresponding to the best iteration back to the original folder and cleanup the dir. 
+    dest_dir = os.path.dirname(geo_dir)
+    cleanup_and_restore_best(outdir, dest_dir, best_iteration)
 
     return
 
