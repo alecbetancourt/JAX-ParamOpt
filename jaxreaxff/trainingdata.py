@@ -59,6 +59,13 @@ class RMSGItem(object):
     sys_ind: Array
     target: Array
     weight: Array
+
+@dataclasses.dataclass
+class HessianItem(object):
+    sys_ind: Array
+    a_ind: Array
+    target: Array
+    weight: Array
     
 @dataclasses.dataclass
 class TrainingData(object):
@@ -69,3 +76,4 @@ class TrainingData(object):
     torsion_items: TorsionItem = None
     force_items: ForceItem = None
     RMSG_items: RMSGItem = None
+    hessian_items: HessianItem = None

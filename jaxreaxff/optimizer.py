@@ -239,6 +239,26 @@ def calculate_energy_and_charges_w_rest(positions,
   energy = energy + bond_rest_en + angle_rest_en + torsion_rest_en
   return energy, charges
 
+def energy_forces_hessian(positions,
+                          structure,
+                          nbr_lists,
+                          force_field,
+                          ff_type,
+                          ffq_ff):
+  (energy, charges), forces = jax.value_and_grad(calculate_energy_and_charges, has_aux=True)(positions,
+                                 structure,
+                                 nbr_lists,
+                                 force_field,
+                                 ff_type,
+                                 ffq_ff)
+  hessian, charges = jax.hessian(calculate_energy_and_charges, has_aux=True)(positions,
+                                 structure,
+                                 nbr_lists,
+                                 force_field,
+                                 ff_type,
+                                 ffq_ff)
+  return (energy, charges), forces, hessian
+
 def calculate_loss(force_field,
                     list_positions,
                     list_structure,
@@ -253,16 +273,18 @@ def calculate_loss(force_field,
   # create a dictionary to return individual erros if needed
   all_indiv_errors = dict()
   # Required functions for potential energy and force calculations
-  if ff_type == "reaxff":
+  if ff_type == "reaxff" or ff_type == "amber":
     pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,None,None,None))
     pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
                                               has_aux=True),
                           in_axes=(0,0,0,None,None,None))
+    pot_w_hessian_f = jax.vmap(energy_forces_hessian, in_axes=(0,0,0,None,None,None))
   elif ff_type == "ambereem":
     pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,0,None,None))
     pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
                                               has_aux=True),
                           in_axes=(0,0,0,0,None,None))
+    # TODO remove this section and standardize
 
   dtype = list_positions[0].dtype
 
@@ -272,6 +294,7 @@ def calculate_loss(force_field,
                     or training_data.torsion_items != None)
   force_flag = (training_data.force_items != None
                       or training_data.RMSG_items != None)
+  hessian_flag = training_data.hessian_items != None
 
   # use onp here to not let get these traced by JAX
   list_sizes = onp.array([len(l.name) for l in list_structure])
@@ -290,6 +313,8 @@ def calculate_loss(force_field,
     all_forces = jnp.zeros((total_num_systems, max_atom_count, 3),dtype=dtype)
   if geo_flag:
     all_positions = jnp.zeros((total_num_systems, max_atom_count, 3),dtype=dtype)
+  if hessian_flag:
+    all_hessians = jnp.zeros((total_num_systems, max_atom_count, max_atom_count, 3, 3),dtype=dtype)
 
   # evaluate the required observables
   for i in range(len(list_structure)):
@@ -299,7 +324,39 @@ def calculate_loss(force_field,
     elif ff_type == "ambereem":
       list_nbr = []
       ff = force_field[i]
-    if force_flag:
+    elif ff_type == "amber":
+      list_nbr = []
+      ff = force_field
+    
+    if hessian_flag:
+      #https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html#jacobians-and-hessians-using-jacfwd-and-jacrev
+      # TODO look into this point in particular to see which method is more efficient.
+      # it may also be the case that some datasets would only have hessian information
+      # but this seems unlikely so i'm not opposed to this approach
+
+      # TODO how to get forces and hessian in one go?
+      (energy, charges), forces, hessian = pot_w_hessian_f(list_positions[i],
+                                                list_structure[i],
+                                                list_nbr,
+                                                ff,
+                                                ff_type,
+                                                ffq_ff)
+
+      all_forces = all_forces.at[list_structure[i].name,
+                                 :atom_counts[i],
+                                 :].set(forces)
+
+      natoms = atom_counts[i]
+
+      # details are in the documentation for jax.hessian but the pytree
+      # is returned in block format rather than (natoms*3,natoms*3) format
+      hess_block = hessian.transpose(0, 1, 3, 2, 4)
+
+      # store into preallocated array
+      all_hessians = all_hessians.at[
+          list_structure[i].name, :natoms, :natoms, :, :
+      ].set(hess_block)
+    elif force_flag:
       (energy, charges), forces = pot_w_force_f(list_positions[i],
                                                 list_structure[i],
                                                 list_nbr,
@@ -309,7 +366,6 @@ def calculate_loss(force_field,
       all_forces = all_forces.at[list_structure[i].name,
                                  :atom_counts[i],
                                  :].set(forces)
-
     else:
       energy, charges = pot_f(list_positions[i],
                                 list_structure[i],
@@ -332,13 +388,23 @@ def calculate_loss(force_field,
                                  :atom_counts[i],
                                  :].set(list_positions[i])
 
-
   if training_data.energy_items != None:
+    # TODO add flag for relative energies or separate training item
+    # also add print or dump flag for this at every step
+    # maybe dump everything into labeled json or hdf file?
     energy_items = training_data.energy_items
     energy_preds = jnp.sum(all_energy[energy_items.sys_inds]
                            * energy_items.multip,axis=1)
+
+    #if args.relative_energy_flag # TODO needed for torsion
+    #  energy_preds = energy_preds - jnp.min(energy_preds)
+
+    # TODO add RMSE/MSE/SSE flag
     energy_errors = ((energy_items.target - energy_preds) /
                             energy_items.weight) ** 2
+    # TODO if debug print individual errors
+    # if debug > 1:
+    #   jax.debug.print("energy errors {}", energy_errors)
     energy_error = jnp.sum(energy_errors)
     total_error += energy_error
     if return_indiv_error:
@@ -363,7 +429,24 @@ def calculate_loss(force_field,
     total_error += force_error
     if return_indiv_error:
       all_indiv_errors['FORCE'] = [force_preds, force_items.target, force_errors]
+  if training_data.hessian_items != None:
+    hessian_items = training_data.hessian_items
+    # TODO does the convention here also need to be negative?
+    #all_hessians = hessians * -1
+    p_i = hessian_items.a_ind # index into preds to match training items
 
+    # grab all 3x3 chunks from all_hessians
+    hessian_preds = all_hessians[hessian_items.sys_ind, p_i[:, 0], p_i[:, 1]]
+    # TODO this probably isn't good for memory coherency, look into alternatives
+    # could store flat in segments of 9*N
+    # assuming things are stored as total_struc*NxN,3,3 instead of total_struc,N,N,3,3
+    # hessian_preds = all_hessians[hessian_items.sys_ind, 3*i_0:3*(i_0+1), 3*i_1:3*(i_1+1)]
+    hessian_errors = ((hessian_items.target - hessian_preds) /
+                           hessian_items.weight.reshape(-1,1,1)) ** 2
+    hessian_error = jnp.sum(hessian_errors)
+    total_error += hessian_error
+    if return_indiv_error:
+      all_indiv_errors['HESSIAN'] = [hessian_preds, hessian_items.target, hessian_errors]
   if training_data.dist_items != None:
     dist_items = training_data.dist_items
     pos1 = all_positions[dist_items.sys_ind,dist_items.a1_ind]
@@ -407,6 +490,9 @@ def calculate_loss(force_field,
     targets = torsion_items.target 
     diff = angle_difference(cur_angle, targets)
     torsion_errors = (diff / torsion_items.weight) ** 2
+    # TODO if debug print individual errors, already partially implemented
+    # with return_indiv_error or debug > 1
+    # print("torsion errors", torsion_errors)
     torsion_error = jnp.sum(torsion_errors)
     total_error += torsion_error
     if return_indiv_error:
@@ -545,14 +631,16 @@ def serialize_numpy(arr, filename):
 def deserialize_numpy(filename):
   return onp.load(filename)
 
-def run_subprocess(coords, structs, force_fields, ffq_ff, minim_steps, idx):
-  coords_file = f"./tmp/coords_{idx}.npy"
-  structs_file = f"./tmp/structs_{idx}.pkl"
-  force_fields_file = f"./tmp/force_fields_{idx}.pkl"
-  ffq_ff_file = f"./tmp/ffq_ff_{idx}.pkl"
-  out_coord_file = f"./tmp/out_coord_{idx}.npy"
-  out_energy_file = f"./tmp/out_energy_{idx}.npy"
-  out_grad_file = f"./tmp/out_grad_{idx}.npy"
+def run_subprocess(coords, structs, force_fields, ffq_ff, minim_steps, b_idx, l_idx, charge_method, nonbonded_method):
+  # to prevent collisions, each batch has a b_idx
+  # and then each struct in the batch has a l_idx
+  coords_file = f"./tmp/coords_{b_idx}_{l_idx}.npy"
+  structs_file = f"./tmp/structs_{b_idx}_{l_idx}.pkl"
+  force_fields_file = f"./tmp/force_fields_{b_idx}_{l_idx}.pkl"
+  ffq_ff_file = f"./tmp/ffq_ff_{b_idx}_{l_idx}.pkl"
+  out_coord_file = f"./tmp/out_coord_{b_idx}_{l_idx}.npy"
+  out_energy_file = f"./tmp/out_energy_{b_idx}_{l_idx}.npy"
+  out_grad_file = f"./tmp/out_grad_{b_idx}_{l_idx}.npy"
 
   # Serialize inputs
   serialize_numpy(coords, coords_file)
@@ -565,10 +653,14 @@ def run_subprocess(coords, structs, force_fields, ffq_ff, minim_steps, idx):
   script_directory = os.path.dirname(script_path)
   python_executable = sys.executable
 
+  # TODO add debug option here to redirect stdout to normal stream
+  # this isn't a great solution because you can never see anything but failing errors
+  # there generally needs to be more error checking and file cleanup added here
   subprocess.run([
       python_executable, script_directory + "/dlfind.py",
-      coords_file, structs_file, force_fields_file, ffq_ff_file, out_coord_file, out_energy_file, out_grad_file, str(minim_steps)
+      coords_file, structs_file, force_fields_file, ffq_ff_file, out_coord_file, out_energy_file, out_grad_file, str(minim_steps), str(charge_method)
   ], stdout=subprocess.DEVNULL)
+  #])
 
   # Load result
   out_coord = onp.load(out_coord_file)
@@ -625,30 +717,46 @@ def dlfind_opt(list_structure,
       jax.tree_util.tree_map(lambda x: x[j], list_sub_structure[i])
       for j in range(batch_size)
     ]
-    ff_list = [
-      #move_dataclass(jax.tree_util.tree_map(lambda x: x[j], force_field[i]), onp)
-      jax.tree_util.tree_map(lambda x: x[j], force_field[i])
-      for j in range(batch_size)
-    ]
 
-    optimized_coords_list = []
-    num_tasks = int(os.environ.get("SLURM_NTASKS", "1"))
-    with ThreadPoolExecutor(max_workers=num_tasks) as executor:
-      futures = [
-        executor.submit(run_subprocess, coords_list[i], struct_list[i], ff_list[i], ffq_ff, minim_steps, i)
-        for i in range(batch_size)
+    #TODO look at this again, a few things are suspicious i.e. energy_minim_steps, shape, ind1/2/3/4
+    traj_energy_list = []
+
+    if ff_type == "ambereem":
+      ff_list = [
+        #move_dataclass(jax.tree_util.tree_map(lambda x: x[j], force_field[i]), onp)
+        jax.tree_util.tree_map(lambda x: x[j], force_field[i])
+        for j in range(batch_size)
       ]
-      results = [future.result() for future in futures]
+
+      optimized_coords_list = []
+      num_tasks = int(os.environ.get("SLURM_NTASKS", "1"))
+      with ThreadPoolExecutor(max_workers=num_tasks) as executor:
+        futures = [
+          executor.submit(run_subprocess, coords_list[k], struct_list[k], ff_list[k], ffq_ff, minim_steps, i, k, "FFQ", "NoCutoff")
+          for k in range(batch_size)
+        ]
+        results = [future.result() for future in futures]
+    elif ff_type == "amber":
+      optimized_coords_list = []
+      num_tasks = int(os.environ.get("SLURM_NTASKS", "1"))
+      with ThreadPoolExecutor(max_workers=num_tasks) as executor:
+        futures = [
+          executor.submit(run_subprocess, coords_list[k], struct_list[k], force_field, ffq_ff, minim_steps, i, k, "GAFF", "NoCutoff")
+          for k in range(batch_size)
+        ]
+        results = [future.result() for future in futures]
 
     traj_coordinates, traj_energies, final_grad = zip(*results)
     traj_coordinates = jnp.stack(traj_coordinates) # TODO onp or jnp? had as onp originally
     traj_energies = jnp.stack(traj_energies)
+    traj_energy_list.append(traj_energies)
     final_grad = jnp.stack(final_grad)
 
     # TODO add option to print individual RMSG and energies
     # particularly important when some structures aren't optimized
     # they will have disproportionately high energy/RMSG
-    # print("RMSG", jax.jit(calculate_RMSG)(final_grad, list_sub_structure[i].atom_count))
+    #jax.debug.print("RMSG  {}", jax.jit(calculate_RMSG)(final_grad, list_sub_structure[i].atom_count))
+    #jax.debug.print("final grad {}", final_grad)
 
     list_sub_cur_pos[i] = traj_coordinates
     cur_loss_vals[i] = jnp.sum(traj_energies)
@@ -659,6 +767,10 @@ def dlfind_opt(list_structure,
   for i in range(len(list_pos)):
     if len(list_sub_structure[i].energy_minimize) > 0:
       list_pos[i] = list_pos[i].at[list_structure[i].energy_minimize].set(list_sub_cur_pos[i])
+
+  # TODO it looks like in the event of an error, this can just keep going
+  # there's probably a more robust way of terminating execution if the threaded job fails
+
   return list_pos, cur_total_loss, cur_center_sizes, full_RMSG_vals
 
 
@@ -669,7 +781,7 @@ def energy_minimize(list_structure,
                     minim_steps = 100,
                     target_RMSG = 1.0):
   # DL-FIND option
-  if ff_type == "ambereem":
+  if ff_type == "ambereem" or ff_type == "amber":
     [list_pos, cur_total_loss, 
     cur_center_sizes, full_RMSG_vals] = dlfind_opt(list_structure,
                     center_sizes, force_field, ffq_ff,
@@ -730,9 +842,13 @@ def energy_minimize(list_structure,
             sub_nbr = allocate_func(list_sub_cur_pos[i],
                                             list_sub_structure[i],
                                             force_field, cur_center_sizes[i])[0]
+          ff = force_field
         elif ff_type == "ambereem":
           sub_nbr = []
           ff = force_field[i]
+        elif ff_type == "amber":
+          sub_nbr = []
+          ff = force_field
           
         (energy, ch), grads = force_func(list_sub_cur_pos[i],
                                  list_sub_structure[i],
@@ -799,10 +915,10 @@ def lower_bounds(params, bounds, advanced_opts):
 def random_parameter_search(bounds, sample_count,
                             param_indices, force_field, training_data,
                             list_positions, aligned_data, center_sizes,
-                            loss_func):
+                            loss_func, ff_type, opt_mode, ffq_ff):
 
   args = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes)
+          list_positions, aligned_data, center_sizes, ff_type, opt_mode, ffq_ff)
   dtype = force_field.gamma.dtype
   min_loss = float('inf')
   min_params = None
@@ -857,7 +973,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
       params = global_min_params
       param_lower_flag = True
 
-    if ff_type == "reaxff":
+    if ff_type == "reaxff" or ff_type == "amber":
       force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
     elif ff_type == "ambereem":
       ffq_ff = set_params_jit(ffq_ff, param_indices, params, ff_type, opt_mode)

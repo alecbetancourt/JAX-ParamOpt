@@ -78,11 +78,26 @@ def map_params_amber(params, mode='group'):
 
     # TODO clean this up and also implement logic to differentiate single vs group case
     # in particular, indexing for things like torsions is going to be more difficult
-    type_dict = {0:"gamma", 1:"electronegativity", 2:"hardness"}
+    # TODO move this to the force field definitions or somewhere more extensible
+    # could probably just extract this from params to index as well
+    # reax version takes an argument for this, need to look into that more as well
+    type_dict = {(2,0):"torsion_k",(2,1):"torsion_phase",(2,2):"torsion_period",(4,0):"scee_14",(4,1):"scnb_14",
+                (5,0):"gamma", (5,1):"electronegativity", (5,2):"hardness"}
+    # TODO there's a more complex issue underlying all of this
+    # parameters like periodicity are only well defined for integers
+    # while all of the standard optimizers assume continuous values and gradients
+    # i think the original code got around this because parmed will seemingly floor
+    # all periodicity values before updating the ff. The issue here being that the code
+    # doesn't necessarily do this now and i think it makes the optimization more difficult
+    # my thoughts for solutions here are to either add a parameter to the set_params fn to
+    # explicitly floor parameters that are marked as integers or set up some pre-optimization scheme
+    # in the global section that does brute force search here and then removes those values from the final
+    # optimization routine
     new_params = []
     for p in params:
         key = (p[0],p[1],p[2])
-        value = (type_dict[p[2]], (p[1],))
+        #value = (type_dict[p[2]], (p[1],))
+        value = (type_dict[(p[0], p[2])], (p[1],))
         new_item = (value, p[3],p[4],p[5])
         new_params.append(new_item)
     return new_params
@@ -145,6 +160,7 @@ def align_ff_amber(force_fields, max_sizes, dtype):
 
     name = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
     atom_types = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
+    atomic_number = onp.zeros(shape=(full_size, max_sizes["atomic_number"], 3), dtype=dtype)
     total_charge = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
     params_to_indices = [None] * full_size
     bond_restraints = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
@@ -198,6 +214,7 @@ def align_ff_amber(force_fields, max_sizes, dtype):
         name[i] = f.name
         atom_types[i] = f.atom_types
         total_charge[i] = f.total_charge
+        atomic_number[i] = f.atomic_number
         params_to_indices[i] = f.params_to_indices
         bond_restraints[i] = f.bond_restraints
         angle_restraints[i] = f.angle_restraints
@@ -245,6 +262,7 @@ def align_ff_amber(force_fields, max_sizes, dtype):
                             name=name,
                             atom_types=atom_types,
                             total_charge=total_charge,
+                            atomic_number=atomic_number,
                             params_to_indices=params_to_indices,
                             bond_restraints=bond_restraints,
                             angle_restraints=angle_restraints,
@@ -300,9 +318,9 @@ def parse_and_save_force_field_amber(f_list, force_field, ffq_param_file, ffq_na
             type_name = parts[0]
             if type_name in GAFFTYPES:
                 type_idx = GAFFTYPES[type_name]
-                u_g = getattr(force_field, 'gamma')[0, type_idx]
-                u_e = getattr(force_field, 'electronegativity')[0, type_idx]
-                u_h =  getattr(force_field, 'hardness')[0, type_idx]
+                u_g = getattr(force_field, 'gamma')[type_idx]
+                u_e = getattr(force_field, 'electronegativity')[type_idx]
+                u_h =  getattr(force_field, 'hardness')[type_idx]
                 output.write(f"{parts[0]} {u_g:.4f} {u_e:.4f} {u_h:.4f} {' '.join(map(str, parts[4:]))}\n")
             else:
                 print( f"\"{type_name}\" not found in GAFF types, not appending to AMBER params file")

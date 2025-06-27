@@ -16,13 +16,14 @@ import math
 import copy
 from jaxreaxff.clustering import modified_kmeans
 from jaxreaxff.trainingdata import ChargeItem, EnergyItem, DistItem, AngleItem 
-from jaxreaxff.trainingdata import TorsionItem, ForceItem, RMSGItem, TrainingData
+from jaxreaxff.trainingdata import TorsionItem, ForceItem, RMSGItem, HessianItem, TrainingData
 from jaxreaxff.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
 from jaxreaxff.inter_list_counter import pool_handler_for_inter_list_count
 from jax_md import dataclasses
 from jax_md.reaxff.reaxff_forcefield import ForceField
 import argparse
 from jax_md.amber.amber_helper import GAFFTYPES
+import h5py
 
 # Since we shouldnt access the private API (jaxlib), create a dummy jax array
 # and get the type information from the array.
@@ -58,13 +59,16 @@ def get_params(force_field, params_list, ff_type, opt_mode):
       x = getattr(force_field, name)[index]
       res.append(x)
     return jnp.array(res)
-  elif ff_type == "ambereem":
+  # TODO is this redundant? probably need to examine original code to make sure this is all consistent
+  elif ff_type == "ambereem" or ff_type == "amber":
     res = []
     for param in params_list:
       name = param[0]
       index = param[1]
       x = getattr(force_field, name)[index]
       res.append(x)
+    # TODO this fixes some issues with type conversions but also doesn't seem safe
+    #return jnp.array(res, dtype=jnp.float64)
     return jnp.array(res)
 
 def set_params(force_field, params_list, params, ff_type, opt_mode):
@@ -85,7 +89,7 @@ def set_params(force_field, params_list, params, ff_type, opt_mode):
     new_ff = dataclasses.replace(force_field, **attr_dict)
     new_ff = ForceField.fill_off_diag(new_ff)
     new_ff = ForceField.fill_symm(new_ff)
-  elif ff_type == "ambereem":
+  elif ff_type == "ambereem" or ff_type == "amber":
     attr_dict = dict()
     for i,param in enumerate(params_list):
       name = param[0]
@@ -332,6 +336,23 @@ def build_force_report_item(force_item, pred, weighted_error, geo_index_to_name)
     rows.append(row)
   return rows
 
+def build_hessian_report_item(hessian_item, pred, weighted_error, geo_index_to_name):
+  '''
+  Build the report row for force item
+  '''
+  # TODO should this take an entire row of the hessian?
+  # there is probably a more compact way to express this
+  name = geo_index_to_name[hessian_item.sys_ind]
+  out_str = f"{name} {hessian_item.a_ind + 1}"
+  rows = []
+  num_columns = len(hessian_item)
+  for i in range(num_columns):
+    new_out_str = f"HESSIAN-{i}: " + out_str
+    row = [new_out_str, hessian_item.weight, float(hessian_item.target[i]),
+     float(pred[i]), float(weighted_error[i])] # TODO sum weighted error?
+    rows.append(row)
+  return rows
+
 def build_charge_report_item(charge_item, pred, weighted_error, geo_index_to_name):
   '''
   Build the report row for charge item
@@ -384,6 +405,7 @@ def produce_error_report(filename, tranining_items, indiv_error, geo_index_to_na
   functions = {"ENERGY":build_energy_report_item,
                "CHARGE":build_charge_report_item,
                "FORCE":build_force_report_item,
+               "HESSIAN":build_hessian_report_item,
                "DISTANCE":build_distance_report_item,
                "ANGLE":build_angle_report_item,
                "TORSION":build_torsion_report_item}
@@ -391,6 +413,7 @@ def produce_error_report(filename, tranining_items, indiv_error, geo_index_to_na
   attributes = {"ENERGY":"energy_items",
                "CHARGE":"charge_items",
                "FORCE":"force_items",
+               "HESSIAN":"hessian_items",
                "DISTANCE":"dist_items",
                "ANGLE":"angle_items",
                "TORSION":"torsion_items"}
@@ -435,6 +458,103 @@ def read_geo_file(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
   if not os.path.exists(geo_file):
     print("Path {} does not exist!".format(geo_file))
     return []
+
+  if os.path.splitext(geo_file)[-1] in ['.h5', '.hdf5']:
+    print("[INFO] Input geometry format is detected as .h5")
+    list_systems = []
+    with h5py.File(geo_file, 'r') as hf:
+      # TODO is this necessary, or is there a more automated way of making
+      # h5py and jax more interoperable?
+      # TODO clean this up and merge the two code paths after these details are worked out
+      # TODO consider if doing this two step group approach is really the best way
+      # it could also help to have some main /structures/cluster... group
+      # and then figure out how to grab all the leaves of /structures
+      # more flexible going forward too as you don't iterate over every group explicitly
+      for key in hf:
+        if key == "training":
+            continue
+        group = hf[key]
+        num_structures = group.attrs["structure_count"]
+        system_name = key
+        num_atoms = group.attrs["nat"]
+        atom_names = onp.char.decode(group["species"][()], encoding='utf-8')
+        reax_atom_types = onp.array([name_to_index_map[name] for name in atom_names])
+        atomic_nums = onp.zeros(num_atoms, dtype=onp.int32)
+        atomic_nums = onp.where(atom_names=="C", 6, atomic_nums)
+        atomic_nums = onp.where(atom_names=="O", 8, atomic_nums)
+        atomic_nums = onp.where(atom_names=="H", 1, atomic_nums)
+        atoms_positions = group["coordinates"][()]
+        box = [999.0, 999.0, 999.0]
+        box_angles = [90.0,90.0,90.0]
+        is_periodic = False
+        do_minimization = True
+        max_it = 99999
+        # box information
+        orth_mat = orthogonalization_matrix(box, box_angles)
+        all_shifts = calculate_box_shifts(is_periodic, far_nbr_cutoff, orth_mat)
+        # TODO add restraints
+        bond_restraints = [[-1,-1,0,0,0]]
+        angle_restraints = [[-1,-1,-1,0,0,0]]
+        torsion_restraints = [[-1,-1,-1,-1,0,0,0]]
+        bond_restraints = onp.array(bond_restraints)
+        angle_restraints = onp.array(angle_restraints)
+        torsion_restraints = onp.array(torsion_restraints)
+        total_charge = onp.zeros((num_structures,)) # TODO add non 0 charge
+        new_bond_restraints = BondRestraint(ind1 = bond_restraints[:,0].astype(onp.int32),
+                                            ind2 = bond_restraints[:,1].astype(onp.int32),
+                                            force1 = bond_restraints[:,2].astype(onp.float32),
+                                            force2 = bond_restraints[:,3].astype(onp.float32),
+                                            target = bond_restraints[:,4].astype(onp.float32))
+
+        new_angle_restraints = AngleRestraint(ind1 = angle_restraints[:,0].astype(onp.int32),
+                                            ind2 = angle_restraints[:,1].astype(onp.int32),
+                                            ind3 = angle_restraints[:,2].astype(onp.int32),
+                                            force1 = angle_restraints[:,3].astype(onp.float32),
+                                            force2 = angle_restraints[:,4].astype(onp.float32),
+                                            target = angle_restraints[:,5].astype(onp.float32))
+
+        new_torsion_restraints = TorsionRestraint(ind1 = torsion_restraints[:,0].astype(onp.int32),
+                                            ind2 = torsion_restraints[:,1].astype(onp.int32),
+                                            ind3 = torsion_restraints[:,2].astype(onp.int32),
+                                            ind4 = torsion_restraints[:,3].astype(onp.int32),
+                                            force1 = torsion_restraints[:,4].astype(onp.float32),
+                                            force2 = torsion_restraints[:,5].astype(onp.float32),
+                                            target = torsion_restraints[:,6].astype(onp.float32))
+        # TODO this should be changed
+        # training items should be separate from the structures in principle
+        # the question is how to best organize and iterate over them
+        # it looks like these values may also be dummy values anyways?
+        # where are they used?
+        # TODO maybe remove from structures.py?
+        target_e = 0.0
+        # if "/training/energy_items" in hf:
+        #   target_e = group["energies"][()]
+        
+        target_f = onp.zeros((num_atoms, 3), dtype=onp.float32) # TODO add force, charge, hess
+        # if "/training/force_items" in hf:
+        #   target_f = group["forces"][()]
+        
+        target_ch = onp.zeros((num_atoms), dtype=onp.float32)
+        # if "/training/charge_items" in hf:
+        #   target_ch = group["charges"][()]
+
+        # TODO this might not scale well for empty storage
+        # maybe use none as a default value for these
+        # target_hess = onp.zeros((num_structures, num_atoms, num_atoms), dtype=onp.float32)
+
+        for i in range(num_structures):
+          new_system = Structure(system_name + f"_{i}", num_atoms,
+                                  reax_atom_types, atomic_nums,
+                                  atoms_positions[i], orth_mat, total_charge[i],
+                                  do_minimization, max_it, all_shifts,
+                                  new_bond_restraints, new_angle_restraints,
+                                  new_torsion_restraints,
+                                  target_e,target_f,target_ch) # target values are not used here
+
+          list_systems.append(new_system)
+
+    return list_systems
+
   list_systems = []
   f = open(geo_file,'r')
   system_name = ''
@@ -479,7 +599,7 @@ def read_geo_file(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
         atomic_nums = onp.where(atom_names=="H", 1, atomic_nums)
         reax_atom_types = [name_to_index_map[name] for name in atom_names]
         reax_atom_types = onp.array(reax_atom_types)
-      elif ff_type == "ambereem":
+      elif ff_type == "ambereem" or ff_type == "amber":
         #TODO just change this to atom types
         reax_atom_types = [GAFFTYPES[name.lower()] for name in atom_names]
         reax_atom_types = onp.array(reax_atom_types)
@@ -679,6 +799,66 @@ def read_train_set(train_in):
   '''
   Read the training set data
   '''
+  if os.path.splitext(train_in)[-1] in ['.h5', '.hdf5']:
+    # TODO need to add support for multiple items per nrg training item
+    # TODO also need to finish adding other training items for hdf parsing
+    # should probably look at disulfide/cobalt example
+    # h5 variable length strings?
+    training_items = {}
+    energy_items = []
+    force_items = []
+    hessian_items = []
+    with h5py.File(train_in, 'r') as hf:
+      # energy items
+      if "training/energy_items" in hf:
+        for i in range(len(hf["/training/energy_items/energies"])):
+          name_list = [name.decode(encoding='utf-8') for name in hf["/training/energy_items/names"][i]]
+          multiplier_list = list(hf["/training/energy_items/multipliers"][i])
+          energy = hf["/training/energy_items/energies"][i]
+          weight = hf["/training/energy_items/weights"][i]
+          energy_item = EnergyItem(name_list, multiplier_list, energy, weight)
+          energy_items.append(energy_item)
+      
+      # force items
+      # TODO think about loading everything in one go and then iterating
+      # it seems like this may be somewhat slow
+      # or figure out how to do vmapped instantiation of training items
+      if "training/force_items" in hf:
+        start_time = time.time()
+        for i in range(len(hf["/training/force_items/forces"])):
+          name_list = hf["/training/force_items/names"][i].decode(encoding='utf-8')
+          weight = hf["/training/force_items/weights"][i]
+          indices = hf["/training/force_items/indices"][i]
+          forces = hf["/training/force_items/forces"][i]
+
+          force_item = ForceItem(name_list, indices, [forces[0],forces[1],forces[2]], weight)
+          force_items.append(force_item)
+        end_time = time.time()
+        print("Force item loading time:", end_time-start_time)
+
+      # hessian items
+      if "training/hessian_items" in hf:
+        start_time = time.time()
+        for i in range(len(hf["/training/hessian_items/names"])):
+          name_list = hf["/training/hessian_items/names"][i].decode(encoding='utf-8')
+          weight = hf["/training/hessian_items/weights"][i]
+          indices = hf["/training/hessian_items/indices"][i]
+
+          # TODO figure out better way of doing this
+          # flattening the hessian isn't exactly trivial
+          # in this case, will be NxN,3,3 in shape versus n,3,n,3 shape from jax.hessian
+          hessian = hf["/training/hessian_items/hessians"][i]
+
+          hessian_item = HessianItem(name_list, indices, hessian, weight)
+          hessian_items.append(hessian_item)
+        end_time = time.time()
+        print("Hessian item loading time:", end_time-start_time)
+
+    training_items['energy_items'] = energy_items
+    training_items['force_items'] = force_items
+    training_items['hessian_items'] = hessian_items
+    return training_items
+
   f = open(train_in, 'r')
   training_items = {}
   energy_flag = 0
