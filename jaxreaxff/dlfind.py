@@ -84,9 +84,30 @@ def dlfind_min(pos, struct, ff, ffq_ff, max_iter, charge_method):
   #   #[3, 2, 1, 9, 8]  # torsion: atoms 1–0–8–7 + 1 for fortran indexing
   #   [[3, 2, 1, 9, 8]]
   #   , dtype=jnp.int32)
+  # condata = struct.torsion_restraints
+  # contains ind1/2/3/4, and target, not sure if 0 indexed
+  # each are arrays so len condata is really len target or such
 
-  #spec = np.zeros(2*nat + 5*condata.shape[0] + nat, dtype=np.int32) use size instead?
-  spec = jnp.zeros(2*nat + 5 + nat, dtype=jnp.int32)
+  # TODO how to deal with case that has no restraints, have to add in more conditional logic
+  # TODO also need to add bond/angle restraints at a minimum, plus any other relevant info
+  # so ncons = nbond+nangle+ntorsion
+  # if ncons = 0, nspec = ?, still pass ncons?, still pass spec?, tatoms?, nz?
+  #torsion_rests = struct.torsion_restraints[1:]
+
+  ncons = len(struct.torsion_restraints.target)-1
+
+  i_0 = jnp.zeros((ncons))+3
+  i_1 = struct.torsion_restraints.ind1[1:] + 1
+  i_2 = struct.torsion_restraints.ind2[1:] + 1
+  i_3 = struct.torsion_restraints.ind3[1:] + 1
+  i_4 = struct.torsion_restraints.ind4[1:] + 1
+
+  #print("dlfinfo i0", i_0, "i1", i_1)
+
+  condata = jnp.stack((i_0, i_1, i_2, i_3, i_4), axis=1)
+
+  spec = jnp.zeros(2*nat + 5*ncons + nat, dtype=jnp.int32) #use size instead?
+  #spec = jnp.zeros(2*nat + 5 + nat, dtype=jnp.int32)
   
   spec = spec.at[:nat].set(1)
 
@@ -96,6 +117,7 @@ def dlfind_min(pos, struct, ff, ffq_ff, max_iter, charge_method):
   # ...
 
   # add constraints starting at offset 2*nat
+  # TODO do this in a vectorized fashion?
   j = 2*nat
   for i, row in enumerate(condata):
       #spec[j + 5*i : j + 5*i + 5] = row
@@ -104,8 +126,11 @@ def dlfind_min(pos, struct, ff, ffq_ff, max_iter, charge_method):
   # should be 1 for hdlc
   spec = spec.at[j + 5:].set(1)
 
-  nspec = 2*nat + 5 + nat
-  dlf_get_params = make_dlf_get_params(coords=pos, printl=0, maxcycle=max_iter, maxene=max_iter*7, icoord=1, spec=spec, ncons=1, tatoms=1, nz=nat) # 1 = HDLC
+  #print("dlfinfo", condata, ncons)
+
+  #nspec = 2*nat + 5 + nat
+  nspec = 2*nat + 5*ncons + nat
+  dlf_get_params = make_dlf_get_params(coords=pos, printl=0, maxcycle=max_iter, maxene=max_iter*7, icoord=1, spec=spec, ncons=ncons, tatoms=1, nz=nat) # 1 = HDLC
   dlf_get_gradient = functools.partial(e_g_func, ff=ff, ffq_ff=None, nrg_fn=nrg_g)
   dlf_put_coords = functools.partial(
       store_results, traj_coords=traj_coordinates, traj_energies=traj_energies

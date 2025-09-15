@@ -10,6 +10,26 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 import os
 
+def load_amber_ff_v2(geo_file, prm_file, pme_flag, charge_model, dtype):
+    if pme_flag:
+        nonbonded_method = "PME"
+    else:
+        nonbonded_method = "NoCutoff"
+    
+    dr_threshold = 0.0 # TODO should this be a toggle, or just go with a safe value like 0.2
+
+    if os.path.isdir(prm_file):
+        print("[INFO] --init_FF is a directory, searching for all .prmtop files")
+
+        f_list = build_prm_list(geo_file, prm_file)
+        force_field, ffq_ff = load_amber_ff_batch(f_list, None, "amber", dtype=dtype)
+    else:
+        force_field = load_amber_ff(inpcrd_file=None, prmtop_file=prm_file, 
+                        ffq_file=None, nonbonded_method=nonbonded_method,
+                        charge_method=charge_model, dr_threshold=dr_threshold, dtype=dtype)
+    
+    return force_field
+
 # Load force field files and return list of structures
 def load_amber_ff_batch(prm_list, ffq_file, ff_type, dtype):
     if ff_type == "amber":

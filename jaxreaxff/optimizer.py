@@ -42,8 +42,16 @@ from frozendict import frozendict
 from jax_md.amber.amber_forcefield import AmberForceField, FFQForceField
 from jaxreaxff.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
 
+# TODO move these constants elsewhere
 rdndgr = 180.0/onp.pi
 dgrrdn = 1.0/rdndgr
+
+# TODO look into consistent units for forces
+# they are likely kJ/mol/nm whereas reax is kcal/mol/A
+# internal units for structures are also A, not NM
+KJ_TO_KCAL = 0.239005736  # kJ/mol to kcal/mol
+FORCE_CONV = KJ_TO_KCAL / 0.1  # (kJ/mol/nm) to (kcal/mol/A)
+HESSIAN_CONV = KJ_TO_KCAL / (0.1 ** 2)  # kJ/mol/nm^2 to kcal/mol/A^2
 
 def calculate_bond_restraint_energy(positions, structure):
   '''
@@ -206,13 +214,16 @@ def calculate_energy_and_charges(positions,
                                                 timestep=1e-3, init_temp=1e-3, return_charges=True, ffq_ff=ffq_ff, backprop_solve=True)
 
     energy, charges = nrg_fn(positions/10, force_field, None)
+    energy = energy * KJ_TO_KCAL # TODO this doesn't seem like the cleanest solution to this
   elif ff_type == "amber":
     nrg_fn, amber_ff, body_fn, state = amber_energy(ff=force_field, nonbonded_method="NoCutoff",
                                                 charge_method="GAFF", ensemble=None,
                                                 timestep=1e-3, init_temp=1e-3, return_charges=True, ffq_ff=ffq_ff, backprop_solve=True)
 
     energy, charges = nrg_fn(positions/10, force_field, None)
+    energy = energy * KJ_TO_KCAL # TODO this doesn't seem like the cleanest solution to this
 
+  #TODO decide if this should be kcal/mol or kj/mol, in addition what unit are forces here?
   return energy, charges
 
 def calculate_energy_and_charges_w_rest(positions,
@@ -398,6 +409,8 @@ def calculate_loss(force_field,
 
     #if args.relative_energy_flag # TODO needed for torsion
     #  energy_preds = energy_preds - jnp.min(energy_preds)
+    #jax.debug.print("energy items target {}", training_data.energy_items.target)
+    #jax.debug.print("energy items preds {}", energy_preds)
 
     # TODO add RMSE/MSE/SSE flag
     energy_errors = ((energy_items.target - energy_preds) /
@@ -634,13 +647,31 @@ def deserialize_numpy(filename):
 def run_subprocess(coords, structs, force_fields, ffq_ff, minim_steps, b_idx, l_idx, charge_method, nonbonded_method):
   # to prevent collisions, each batch has a b_idx
   # and then each struct in the batch has a l_idx
-  coords_file = f"./tmp/coords_{b_idx}_{l_idx}.npy"
-  structs_file = f"./tmp/structs_{b_idx}_{l_idx}.pkl"
-  force_fields_file = f"./tmp/force_fields_{b_idx}_{l_idx}.pkl"
-  ffq_ff_file = f"./tmp/ffq_ff_{b_idx}_{l_idx}.pkl"
-  out_coord_file = f"./tmp/out_coord_{b_idx}_{l_idx}.npy"
-  out_energy_file = f"./tmp/out_energy_{b_idx}_{l_idx}.npy"
-  out_grad_file = f"./tmp/out_grad_{b_idx}_{l_idx}.npy"
+  # TODO this still isn't safe for multiple executions at once
+  # there should be some conditional logic to detect if this is running in a slurm environment
+  # and then it needs to be job_id_b_idx_l_idx
+  is_slurm = "SLURM_JOB_ID" in os.environ
+  is_slurm_array = "SLURM_ARRAY_TASK_ID" in os.environ
+
+  if is_slurm:
+    s_idx = os.getenv("SLURM_JOB_ID")
+  else:
+    s_idx = 0
+
+  if is_slurm_array:
+    a_idx = os.getenv("SLURM_ARRAY_TASK_ID")
+  else:
+    a_idx = 0
+
+  #print("isslurm, isarray", is_slurm, is_slurm_array)
+
+  coords_file = f"./tmp/coords_{s_idx}_{a_idx}_{b_idx}_{l_idx}.npy"
+  structs_file = f"./tmp/structs_{s_idx}_{a_idx}_{b_idx}_{l_idx}.pkl"
+  force_fields_file = f"./tmp/force_fields_{s_idx}_{a_idx}_{b_idx}_{l_idx}.pkl"
+  ffq_ff_file = f"./tmp/ffq_ff_{s_idx}_{a_idx}_{b_idx}_{l_idx}.pkl"
+  out_coord_file = f"./tmp/out_coord_{s_idx}_{a_idx}_{b_idx}_{l_idx}.npy"
+  out_energy_file = f"./tmp/out_energy_{s_idx}_{a_idx}_{b_idx}_{l_idx}.npy"
+  out_grad_file = f"./tmp/out_grad_{s_idx}_{a_idx}_{b_idx}_{l_idx}.npy"
 
   # Serialize inputs
   serialize_numpy(coords, coords_file)

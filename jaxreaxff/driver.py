@@ -39,7 +39,7 @@ from jaxreaxff.helper import (move_dataclass, process_and_cluster_geos,
 import math
 from functools import partial
 from jaxreaxff.helper import build_float_range_checker
-from jaxreaxff.structure_amber import (load_amber_ff_batch, map_params_amber,
+from jaxreaxff.structure_amber import (load_amber_ff_batch, load_amber_ff_v2, map_params_amber,
                                        process_and_cluster_geos_amber,
                                        process_and_cluster_ff_amber,
                                        align_ff_amber, parse_and_save_force_field_amber)
@@ -203,6 +203,19 @@ def main():
            'single - optimization is for a single system\n' +
            'group - optimization is done for a group of files that\n' +
            'share common parameters defined in the params file')
+  parser.add_argument('--amber_pme', metavar='boolean',
+    type=bool,
+    default=False,
+    help='Flag indicating whether to use relative energies or absolute energies for loss evaluation.\n'+
+         'Relative energies are useful for things like torsion scanning.')
+  parser.add_argument('--amber_charge', metavar='charge_model',
+      choices=['GAFF', 'FFQ', 'LRCH'],
+      type=str,
+      default='GAFF',
+      help='Method to use for calculating AMBER charges\n' +
+           '"GAFF" uses default charges from .prmtop file' +
+           '"FFQ" uses charges generated with EEM' +
+           '"LRCH" uses a linear response based solver')
   parser.add_argument('--min_type', metavar='min_type',
       choices=['grad', 'fire', 'dlfind', 'bfgs'], # TODO add fire description
       type=str,
@@ -262,6 +275,9 @@ def main():
 
   #parse arguments
   args = parser.parse_args()
+
+  print("[INFO] SUMMARY OF ARGUMENTS")
+  print(args)
   # TODO: remove
   args.save_opt = "all"
   default_backend = jax.default_backend().lower()
@@ -297,11 +313,13 @@ def main():
   # elif args.ff_type == "amber":
   #   print("[ERROR] Normal AMBER not implemented yet")
   #   sys.exit()
+  # TODO ideally remove this path once the regular amber path is fleshed out
   elif args.ff_type == "ambereem":
+    print("[WARNING] ambereem keyword will be depricated in future")
     f_list = build_prm_list(args.geo, args.init_FF)
     force_fields, ffq_ff = load_amber_ff_batch(f_list, args.ffq_params, args.ff_type, dtype=TYPE)
   elif args.ff_type == "amber":
-    #TODO more logic will need to be added for bespoke mode
+    # TODO more logic will need to be added for bespoke mode
     # the vectorization for this is already done in the ambereem option but the
     # parameter updates in that case are still only for eem parameters
     # how to handle equality constraints in the case of bespoke parameters?
@@ -318,10 +336,20 @@ def main():
     print("[WARNING] bespoke format with individual prmtops is currently not supported")
     print("[INFO] Nonbonded method is NoCutoff")
 
+    # directory provided instead of file, therefore num_geo == num_ff
+    # if os.path.isdir(args.init_FF):
+    #   f_list = build_prm_list(args.geo, args.init_FF)
+    #   force_fields, ffq_ff = load_amber_ff_batch(f_list, args.ffq_params, args.ff_type, dtype=TYPE)
+    # else:
+
+    # force field in this case is either a single force field or a list that
+    # should equal the number of geometries
+    force_field = load_amber_ff_v2(args.geo, args.init_FF, args.amber_pme, args.amber_charge, dtype=TYPE)
+
     # TODO no toggle for pme, charge method, dr threshold currently present
-    force_field = load_amber_ff(inpcrd_file=None, prmtop_file=args.init_FF, 
-                        ffq_file=None, nonbonded_method="NoCutoff",
-                        charge_method="GAFF", dr_threshold=0.0, dtype=TYPE)
+    # force_field = load_amber_ff(inpcrd_file=None, prmtop_file=args.init_FF, 
+    #                     ffq_file=None, nonbonded_method="NoCutoff",
+    #                     charge_method="GAFF", dr_threshold=0.0, dtype=TYPE)
 
     ffq_ff = None
   
@@ -449,7 +477,19 @@ def main():
 
     force_field = aligned_ff # TODO consider if there should just be different code paths for this
   elif args.ff_type == "amber":
-    force_field = move_dataclass(force_field, jnp)
+    # if multiple prmtops are provided, they have to be clustered in the same format as the geometries
+    if isinstance(force_field, list):
+      all_cut_indices_ff, center_sizes_ff = process_and_cluster_ff_amber(force_fields, batch_size=batch_size, dtype=TYPE)
+      # TODO should move ff generation to onp
+      aligned_ff = []
+      for i in range(len(center_sizes_ff)):
+        zz = align_ff_amber([force_fields[i] for i in all_cut_indices_ff[i]], center_sizes_ff[i], TYPE)
+        zz = move_dataclass(zz, jnp)
+        aligned_ff.append(zz)
+
+      force_field = aligned_ff # TODO consider if there should just be different code paths for this
+    else:
+      force_field = move_dataclass(force_field, jnp)
 
   if args.ff_type == "reaxff":
     batched_allocate = reaxff_interaction_list_generator(force_field,
@@ -600,19 +640,28 @@ def main():
       selected_params = jnp.array(init_params)
     # Scipy based global optimization
     elif args.init_FF_type == 'sobol':
+      #m for random_base2 is a power of 2
+      m = int(jnp.log2(args.random_sample_count))
+      print(f"Random sample count is truncated from {args.random_sample_count} to nearest power of 2, {m}, for efficiency reasons")
       args_loss = (param_indices, force_field, training_data,
           list_positions, aligned_data, center_sizes, args.ff_type, args.opt_mode, ffq_ff)
       sampler = qmc.Sobol(d=len(bounds), scramble=False)
-      sample = sampler.random_base2(m=args.random_sample_count)
+      sample = sampler.random_base2(m=m)
       # scale random distribution to bounds
       # TODO does this preserve the properties of the sequence?
       sample = qmc.scale(sample, bounds[:, 0], bounds[:, 1])
 
-      losses = jax.vmap(new_loss_func, in_axes=(0,None))(sample, *args_loss)
+      print("sample dims", sample.shape, len(bounds), args.random_sample_count)
+
+      #losses = jax.vmap(new_loss_func, in_axes=(0,None))(sample, *args_loss)
+      losses = jnp.array([new_loss_func(p, *args_loss) for p in sample], dtype=jnp.float32)
       best_loss_idx = jnp.argmin(losses)
       best_loss = losses[best_loss_idx]
       best_params = sample[best_loss_idx]
-      sys.exit("sobol option not finished")
+      print("best loss", best_loss)
+      print("best params", best_params)
+      selected_params = best_params
+      #sys.exit("sobol option not finished")
       # TODO what other relevant statistics to include for this?
       # mean, median, stdev, etc
       # lots of parameter guesses are completely unphysical so this is an interesting question
@@ -859,9 +908,9 @@ def main():
       # the right function based on the ff mode
       # could use parmed or just dump labeled json
       # also need to work out .dat input for these
-      print("final amber params", params)
-      print("param indices", param_indices)
-      sys.exit("[ERROR] Amber output not finished")
+      # print("final amber params", params)
+      # print("param indices", param_indices)
+      # sys.exit("[ERROR] Amber output not finished")
       force_field = set_params_jit(force_field, param_indices, params, args.ff_type, args.opt_mode)
     if e_minim_flag:
       minim_start = time.time()
@@ -905,10 +954,28 @@ def main():
       new_force_field = move_dataclass(ffq_ff, onp)
       parse_and_save_force_field_amber(f_list, new_force_field, args.ffq_params, ffq_name)
     elif args.ff_type == "amber":
-      sys.exit("[ERROR] Amber output not finished")
+      print("[ERROR] Amber output not finished, report will print but no force field file will be output")
+      #sys.exit("[ERROR] Amber output not finished")
   
     # TODO add mean and stdev along with any other relevant statistics
-    report_name = "{}/report_{}_{}.txt".format(args.out_folder,unique_id,loss_str)
+    is_slurm = "SLURM_JOB_ID" in os.environ
+    is_slurm_array = "SLURM_ARRAY_TASK_ID" in os.environ
+
+    if is_slurm:
+      s_idx = os.getenv("SLURM_JOB_ID")
+    else:
+      s_idx = 0
+
+    if is_slurm_array:
+      a_idx = os.getenv("SLURM_ARRAY_TASK_ID")
+    else:
+      a_idx = 0
+
+    if is_slurm_array:
+      report_name = "{}/report_{}_{}_{}.txt".format(args.out_folder,unique_id,loss_str, a_idx)
+    else:
+      report_name = "{}/report_{}_{}.txt".format(args.out_folder,unique_id,loss_str)
+    print(f"[INFO] Report is being written to {report_name}")
     produce_error_report(report_name, training_data, indiv_errors, geo_index_to_name)
   
     # produce the report for the validation data if available
