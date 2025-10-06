@@ -44,7 +44,7 @@ cuda_version = "cuda{}".format(cuda_version.replace(".",""))
 '''
 
 INSTALL_REQUIRES = [
-  'jax',
+  'jax[cuda12]',
   'jaxlib',
   'scipy',
   'tabulate>=0.8.9',
@@ -52,9 +52,13 @@ INSTALL_REQUIRES = [
   'tqdm',
   'optax',
   'jax_md @ git+https://github.com/alecbetancourt/jax-md.git@amber#egg=jax_md',
-  'numpy',
+  'numpy<2.3.0', # parmed is broken with numpy >=2.3.0
   'numba',
-  'evosax'
+  'evosax',
+  'parmed',
+  'h5py',
+  'libdlfind',
+  'openmm'
 ]
 
 # https://packaging.python.org/guides/making-a-pypi-friendly-readme/
