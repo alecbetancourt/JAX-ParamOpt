@@ -26,7 +26,7 @@ from jaxreaxff.optimizer import (calculate_loss,
                                  calculate_energy_and_charges_w_rest, 
                                  add_noise_to_params, random_parameter_search, 
                                  train_FF, energy_minimize, update_inter_sizes) 
-from jaxreaxff.helper import set_params, get_params, produce_error_report
+from jaxreaxff.helper import set_params_clusters, get_params_clusters, produce_error_report, build_targets
 from jaxreaxff.interactions import (reaxff_interaction_list_generator, 
                                     calculate_dist_and_angles, 
                                     DYNAMIC_INTERACTION_KEYS)
@@ -362,7 +362,7 @@ def main():
     params_list = map_params(params_list_orig, force_field.params_to_indices)
   elif args.ff_type == "ambereem" or args.ff_type == "amber":
     params_list_orig = read_parameter_file(args.params, ignore_sensitivity=0)
-    params_list = map_params_amber(params_list_orig)
+    params_list = map_params(params_list_orig, force_field)
 
   # preprocess params
   param_indices=[]
@@ -383,7 +383,11 @@ def main():
   if args.ff_type == "reaxff":
     systems = read_geo_file(args.geo, force_field.name_to_index, args.ff_type)
   elif args.ff_type == "ambereem" or args.ff_type == "amber":
-    systems = read_geo_file(args.geo, None, args.ff_type)
+    if isinstance(force_field, list):
+      name_to_index_map = [ff.name_to_index for ff in force_field]
+    else:
+      name_to_index_map = force_field.name_to_index
+    systems = read_geo_file(args.geo, name_to_index_map, args.ff_type)
   
   print("[INFO] Geometries have been read; count =", len(systems))
 
@@ -447,11 +451,15 @@ def main():
             if center_sizes[i][k] == 0:
                 center_sizes[i][k] = 1
   elif args.ff_type == "ambereem" or args.ff_type == "amber":
-    batch_size = int(os.environ.get("SLURM_NTASKS", "1"))
+    batch_size = int(len(systems)/args.max_num_clusters)
     print("[INFO] Batch size for structure clustering is", batch_size)
     # TODO print batch size and other information about detected setup at top of file
     # also implement better clustering, this is just a placeholder
     # also make sure max num clusters is respected
+    # TODO in the case of group parameters, the number of index operations
+    # will also have an impact on performance, this isn't a clear metric
+    # memory vs compilation time vs number of batched idx ops
+    # all_cut_indices looks something like [[0,1,4],[2,3,5]] for 2 clusters
     [all_cut_indices, 
     center_sizes] = process_and_cluster_geos_amber(systems, batch_size=batch_size, dtype=TYPE)
 
@@ -479,11 +487,11 @@ def main():
   elif args.ff_type == "amber":
     # if multiple prmtops are provided, they have to be clustered in the same format as the geometries
     if isinstance(force_field, list):
-      all_cut_indices_ff, center_sizes_ff = process_and_cluster_ff_amber(force_fields, batch_size=batch_size, dtype=TYPE)
+      all_cut_indices_ff, center_sizes_ff = process_and_cluster_ff_amber(force_field, batch_size=batch_size, dtype=TYPE)
       # TODO should move ff generation to onp
       aligned_ff = []
       for i in range(len(center_sizes_ff)):
-        zz = align_ff_amber([force_fields[i] for i in all_cut_indices_ff[i]], center_sizes_ff[i], TYPE)
+        zz = align_ff_amber([force_field[i] for i in all_cut_indices_ff[i]], center_sizes_ff[i], TYPE)
         zz = move_dataclass(zz, jnp)
         aligned_ff.append(zz)
 
@@ -507,8 +515,9 @@ def main():
   
   list_positions = [s.positions for s in aligned_data]
 
-  get_params_jit = jax.jit(get_params,static_argnums=(1,2,3))
-  set_params_jit = jax.jit(set_params,static_argnums=(1,3,4))
+  # TODO need to decide if setting static arguments is necessary, performance seems reasonable without
+  get_params_jit = jax.jit(get_params_clusters) # ff_clusters, param_indices, n_theta
+  set_params_jit = jax.jit(set_params_clusters) # ff_clusters, theta, param_indices
   
   force_f = jax.jit(jax.vmap(jax.value_and_grad(calculate_energy_and_charges_w_rest,
                                             has_aux=True),
@@ -519,78 +528,98 @@ def main():
                      , "target_RMSG":args.end_RMSG, "ff_type":args.ff_type}
   minim_func = partial(energy_minimize, **minimize_kwargs)
   
-  if args.ff_type == "reaxff":
-    loss_and_grad_func = jax.jit(jax.value_and_grad(calculate_loss, allow_int=True), # TODO consider if this is safe or how cagri avoided using this
-                                static_argnames=('return_indiv_error','ff_type')) # TODO should this include ff_type?
-  elif args.ff_type == "amber":
-    loss_and_grad_func = jax.jit(jax.value_and_grad(calculate_loss, allow_int=True), # TODO consider if this is safe or how cagri avoided using this
-                                static_argnames=('return_indiv_error','ff_type')) # TODO should this include ff_type?
-  elif args.ff_type == "ambereem":
-    loss_and_grad_func = jax.jit(jax.value_and_grad(calculate_loss, argnums=7, allow_int=True),
-                                static_argnames=('return_indiv_error','ff_type'))
   loss_func = jax.jit(calculate_loss, static_argnames=('return_indiv_error','ff_type'))
-  
-  
-  def new_loss_and_grad_func(params, param_indices,
-                             force_field, training_data,
-                             list_positions, aligned_data, center_sizes, ff_type, opt_mode, ffq_ff):
-    params = jnp.array(params)
-    if ff_type == "reaxff":
-      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
-    elif ff_type == "ambereem":
-      ffq_ff = set_params_jit(ffq_ff, param_indices, params, ff_type, opt_mode)
-    elif ff_type == "amber":
-      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
-    
-    if ff_type == "reaxff":
-      all_inters = [allocate_func(list_positions[i], aligned_data[i], 
-                                force_field, center_sizes[i])[0] 
-                  for i in range(len(center_sizes))]
-    elif ff_type == "ambereem" or ff_type == "amber":
-      all_inters = []
 
-    loss, grads_ff = loss_and_grad_func(force_field,
-                                        list_positions,
-                                        aligned_data,
-                                        all_inters,
-                                        training_data,
-                                        False,
-                                        ff_type,
-                                        ffq_ff)
-  
-    grads = get_params_jit(grads_ff, param_indices, ff_type, opt_mode)
-    loss = onp.asarray(loss,dtype=onp.float64)
-    grads = onp.asarray(grads,dtype=onp.float64)
-  
-    return loss, grads
-  
-  def new_loss_func(params, param_indices,
-                    force_field, training_data,
-                    list_positions, aligned_data, center_sizes, ff_type, opt_mode, ffq_ff,
-                    return_indiv_error = False):
-    params = jnp.array(params)
-    if ff_type == "reaxff":
-      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
-    elif ff_type == "ambereem":
-      ffq_ff = set_params_jit(ffq_ff, param_indices, params, ff_type, opt_mode)
-    elif ff_type == "amber":
-      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
+  # remap the parameter indices based on clustering
+  target_start_time = time.time()
+  param_indices, report_src, num_params = build_targets(param_indices, all_cut_indices, force_field)
+  target_end_time = time.time()
+  print(f"[INFO] Built cluster map for parameters; time = {target_end_time - target_start_time}")
 
-    if ff_type == "reaxff":
-      all_inters = [allocate_func(list_positions[i], aligned_data[i], 
-                                  force_field, center_sizes[i])[0] 
-                    for i in range(len(center_sizes))]
-    elif ff_type == "ambereem" or ff_type == "amber":
-      all_inters = []
-    
-    results = loss_func(force_field,
+  init_params = get_params_clusters(force_field, param_indices, num_params)
+  init_params = onp.array(init_params)
+  #print("[INFO] Initial parameters are: ", init_params)
+
+  def wrapped_loss(params, param_indices, ff_clusters,
                     list_positions,
                     aligned_data,
                     all_inters,
                     training_data,
                     return_indiv_error,
                     ff_type,
-                    ffq_ff)
+                    ffq_ff):
+    # inject theta into clustered FFs with ONE scatter per (cluster, field)
+    # TODO consider removing all but the outer jit here
+    # set and loss_func are both jit, but jit of v_g may optimize better
+    #ff_clusters = set_params_clusters(ff_clusters, params, targets)
+    ff_clusters = set_params_jit(ff_clusters, params, param_indices)
+
+    return loss_func(ff_clusters, list_positions,
+                                aligned_data,
+                                all_inters,
+                                training_data,
+                                return_indiv_error,
+                                ff_type,
+                                ffq_ff)
+
+  # value_and_grad wrt theta
+  val_and_grad = jax.jit(jax.value_and_grad(wrapped_loss), static_argnames=('return_indiv_error','ff_type'))
+
+  def new_loss_and_grad_func(params, param_indices, ff_clusters,
+                              training_data,
+                              list_positions,
+                              aligned_data,
+                              center_sizes,
+                              ff_type,
+                              opt_mode,
+                              ffq_ff):
+    if ff_type == "reaxff":
+      all_inters = [allocate_func(list_positions[i], aligned_data[i], 
+                                  force_field, center_sizes[i])[0] 
+                    for i in range(len(center_sizes))]
+    elif ff_type == "ambereem" or ff_type == "amber":
+      all_inters = []
+
+    # stop-gradient on the big base FF constants to reduce tangents
+    # TODO this may have unintended consequences, need to think about it more
+    # it may also not be necessary now that the loss fn is wrapped and v_g
+    # is w.r.t. flat params instead of full ff struct
+    #ff_clusters = jax.tree_map(jax.lax.stop_gradient, ff_clusters)
+    loss, grad = val_and_grad(params, param_indices, ff_clusters,
+                                  list_positions,
+                                  aligned_data,
+                                  all_inters,
+                                  training_data,
+                                  False,
+                                  ff_type,
+                                  ffq_ff)
+
+    return loss, grad
+
+  def new_loss_func(params, param_indices, ff_clusters,
+                              training_data,
+                              list_positions,
+                              aligned_data,
+                              center_sizes,
+                              ff_type,
+                              opt_mode,
+                              ffq_ff,
+                              return_indiv_error = False):
+    if ff_type == "reaxff":
+      all_inters = [allocate_func(list_positions[i], aligned_data[i], 
+                                  force_field, center_sizes[i])[0] 
+                    for i in range(len(center_sizes))]
+    elif ff_type == "ambereem" or ff_type == "amber":
+      all_inters = []
+
+    results = wrapped_loss(params, param_indices, ff_clusters,
+                                  list_positions,
+                                  aligned_data,
+                                  all_inters,
+                                  training_data,
+                                  return_indiv_error,
+                                  ff_type,
+                                  ffq_ff)
     if return_indiv_error:
       loss, indiv_errors = results
     else:
@@ -599,17 +628,27 @@ def main():
     if return_indiv_error:
       return loss, indiv_errors
     return loss
-  if args.ff_type == "reaxff":
-    init_params = get_params(force_field, param_indices, args.ff_type, args.opt_mode)
-  elif args.ff_type == "ambereem":
-    init_params = get_params(ffq_ff, param_indices, args.ff_type, args.opt_mode)
-  elif args.ff_type == "amber":
-    init_params = get_params(force_field, param_indices, args.ff_type, args.opt_mode)
 
-  init_params = jnp.squeeze(init_params) # TODO figure out why this isn't necessary for cagri's code
-  init_params = onp.array(init_params)
-  
-  
+  # # test params from first step
+  # init_params = onp.array([0.295, 0.413, 0.309, 1.104, 0.295, 0.413, 0.272, 0.612, 0.29, 0.711, 0.301, 0.394, 0.303, 0.451, 0.232, 0.087, 0.234, 0.067, 0.099, 0.042, 0.226, 0.067])
+  # # # test for params from last opt step
+  # # init_params = onp.array([0.417, 1.843, 0.395, 1.353, 0.385, 0.983, 0.353, 0.96, 0.38, 1.589, 0.394, 1.24, 0.364, 0.705, 0.349, 0.626, 0.352, 0.509, 0.205, 0.004, 0.359, 0.514])
+  # # all_inters = []
+  # loss, grad = new_loss_and_grad_func(init_params, param_indices, force_field,
+  #                               training_data,
+  #                               list_positions,
+  #                               aligned_data,
+  #                               center_sizes,
+  #                               args.ff_type,
+  #                               args.opt_mode,
+  #                               ffq_ff)
+  # print("[DEBUG] loss is", loss)
+  # print("[DEBUG] init params", init_params)
+  # #print("[DEBUG] get params test", get_params_from_ff_clusters(force_field, tgt, len(init_params)))
+  # #print("[DEBUG] testing alternate loss func")
+  # #print(force_field[0].sigma[0])
+  # sys.exit()
+
   population_size = args.num_trials
   random_sample_count = args.random_sample_count
   results_list = []
@@ -898,20 +937,7 @@ def main():
     params = res['params']
     current_loss = res['value']
     unique_id = res['unique_id']
-    if args.ff_type == "reaxff":
-      force_field = set_params_jit(force_field, param_indices, params, args.ff_type, args.opt_mode)
-    elif args.ff_type == "ambereem":
-      ffq_ff = set_params_jit(ffq_ff, param_indices, params, args.ff_type, args.opt_mode)
-    elif args.ff_type == "amber":
-      # TODO decide how to dump params
-      # TODO make this a subset of an output writer module that can call
-      # the right function based on the ff mode
-      # could use parmed or just dump labeled json
-      # also need to work out .dat input for these
-      # print("final amber params", params)
-      # print("param indices", param_indices)
-      # sys.exit("[ERROR] Amber output not finished")
-      force_field = set_params_jit(force_field, param_indices, params, args.ff_type, args.opt_mode)
+    force_field = set_params_jit(force_field, params, param_indices)
     if e_minim_flag:
       minim_start = time.time()
       [list_positions, cur_total_energy,
@@ -954,8 +980,8 @@ def main():
       new_force_field = move_dataclass(ffq_ff, onp)
       parse_and_save_force_field_amber(f_list, new_force_field, args.ffq_params, ffq_name)
     elif args.ff_type == "amber":
-      print("[ERROR] Amber output not finished, report will print but no force field file will be output")
-      #sys.exit("[ERROR] Amber output not finished")
+      out_name = "{}/out_params_{}_{}.dat".format(args.out_folder,unique_id,loss_str)
+      parse_and_save_force_field_amber(out_name, params)
   
     # TODO add mean and stdev along with any other relevant statistics
     is_slurm = "SLURM_JOB_ID" in os.environ

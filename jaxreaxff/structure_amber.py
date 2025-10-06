@@ -5,10 +5,12 @@ from jax_md.dataclasses import fields #TODO make sure any invocations of this ar
 
 from jax_md.amber.amber_helper import load_amber_ff, load_ffq_ff, GAFFTYPES
 from jax_md.amber.amber_forcefield import AmberForceField
+from jaxreaxff.helper_prmtop import build_prm_list
 from jaxreaxff.structure import align_structures, align_and_batch_structures
 from concurrent.futures import ThreadPoolExecutor
 import time
 import os
+import json
 
 def load_amber_ff_v2(geo_file, prm_file, pme_flag, charge_model, dtype):
     if pme_flag:
@@ -86,7 +88,9 @@ def load_amber_ff_batch(prm_list, ffq_file, ff_type, dtype):
 
     ###########################################################################
 
-    ffq_ff = load_ffq_ff(ffq_file, dtype=dtype)
+    ffq_ff = None
+    if ffq_file != None:
+        ffq_ff = load_ffq_ff(ffq_file, dtype=dtype)
 
     return list_ffs, ffq_ff
 
@@ -160,11 +164,11 @@ def process_and_cluster_ff_amber(force_fields, batch_size, dtype):
             for field in fields(ff):
                 old_max_size = max_sizes[field.name] if field.name in max_sizes else -1
                 attr = getattr(ff, field.name)
-                if isinstance(attr, jnp.ndarray):
+                if isinstance(attr, jnp.ndarray) or isinstance(attr, onp.ndarray):
                     # TODO consider the following, and look at doc page for this because of different behavior
                     # if jnp.isscalar(attr)
                     new_size = 1 if attr.ndim == 0 else len(attr) # for singleton members, should remove this and replace it with the option below
-                elif jnp.isscalar(attr):
+                elif jnp.isscalar(attr) or onp.isscalar(attr):
                     new_size = 1
                 else:
                     new_size = -1 # for non array types or scalar types that can't be stacked
@@ -180,9 +184,10 @@ def align_ff_amber(force_fields, max_sizes, dtype):
 
     name = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
     atom_types = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
-    atomic_number = onp.zeros(shape=(full_size, max_sizes["atomic_number"], 3), dtype=dtype)
+    atomic_number = onp.zeros(shape=(full_size, max_sizes["atomic_number"]), dtype=dtype)
     total_charge = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
-    params_to_indices = [None] * full_size
+    #params_to_indices = [None] * full_size
+    params_to_indices = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
     bond_restraints = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
     angle_restraints = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
     torsion_restraints = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
@@ -223,6 +228,7 @@ def align_ff_amber(force_fields, max_sizes, dtype):
     hardness = onp.zeros(shape=(full_size, max_sizes["hardness"]+1), dtype=dtype)+1
     species = onp.zeros(shape=(full_size, max_sizes["species"]), dtype=onp.int32)-1
     name_to_index = onp.zeros(shape=(full_size,), dtype=onp.int32) # TODO placeholder
+    #name_to_index = [None] * full_size
     solute_cut = onp.zeros(shape=(full_size,), dtype=onp.int32)
 
     for i in range(full_size):
@@ -234,8 +240,8 @@ def align_ff_amber(force_fields, max_sizes, dtype):
         name[i] = f.name
         atom_types[i] = f.atom_types
         total_charge[i] = f.total_charge
-        atomic_number[i] = f.atomic_number
-        params_to_indices[i] = f.params_to_indices
+        atomic_number[i,:len(f.atomic_number)] = f.atomic_number
+        #params_to_indices[i] = f.params_to_indices
         bond_restraints[i] = f.bond_restraints
         angle_restraints[i] = f.angle_restraints
         torsion_restraints[i] = f.torsion_restraints
@@ -275,7 +281,7 @@ def align_ff_amber(force_fields, max_sizes, dtype):
         electronegativity[i,:len(f.electronegativity)] = f.electronegativity[:len(f.electronegativity)]
         hardness[i,:len(f.hardness)] = f.hardness[:len(f.hardness)]
         species[i,:f.atom_count] = f.species[:f.atom_count]
-        name_to_index[i] = f.name_to_index
+        #name_to_index[i] = f.name_to_index
         solute_cut[i] = f.solute_cut
 
     new_ff = AmberForceField(
@@ -328,19 +334,12 @@ def align_ff_amber(force_fields, max_sizes, dtype):
 
     return new_ff
 
-def parse_and_save_force_field_amber(f_list, force_field, ffq_param_file, ffq_name):
-    with open(ffq_param_file, 'r') as param:
-        param_lines = param.readlines()
-    
-    with open(ffq_name, 'w') as output:
-        for line in param_lines:
-            parts = line.split()
-            type_name = parts[0]
-            if type_name in GAFFTYPES:
-                type_idx = GAFFTYPES[type_name]
-                u_g = getattr(force_field, 'gamma')[type_idx]
-                u_e = getattr(force_field, 'electronegativity')[type_idx]
-                u_h =  getattr(force_field, 'hardness')[type_idx]
-                output.write(f"{parts[0]} {u_g:.4f} {u_e:.4f} {u_h:.4f} {' '.join(map(str, parts[4:]))}\n")
-            else:
-                print( f"\"{type_name}\" not found in GAFF types, not appending to AMBER params file")
+def parse_and_save_force_field_amber(out_name, out_params):
+    # args.init_FF, new_name, new_force_field
+    # TODO implement more rigorous parser, difficult due to different use cases
+    # and the general nature of amber parameter templates
+    # a more structured output that doesn't modify force fields might also work
+    out_params = onp.array(out_params)
+    with open(out_name, 'w') as param:
+        for p in out_params:
+            param.write(f"{p}\n")

@@ -15,12 +15,12 @@ import time
 import copy
 from scipy.optimize import minimize
 from jax_md.reaxff.reaxff_interactions import calculate_angle
-from jax_md.dataclasses import replace, fields
+from jax_md.dataclasses import replace, fields, is_dataclass
 from jax_md.util import safe_mask
 from jax_md.reaxff.reaxff_forcefield import ForceField
 from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
 from jaxreaxff.helper import split_dataclass, count_inter_list_sizes, move_dataclass
-from jaxreaxff.helper import filter_dataclass, set_params, get_params
+from jaxreaxff.helper import filter_dataclass, set_params_clusters, get_params_clusters
 from jaxreaxff.interactions import calculate_dist_and_angles, calculate_dist
 from frozendict import frozendict
 import os
@@ -220,7 +220,7 @@ def calculate_energy_and_charges(positions,
                                                 charge_method="GAFF", ensemble=None,
                                                 timestep=1e-3, init_temp=1e-3, return_charges=True, ffq_ff=ffq_ff, backprop_solve=True)
 
-    energy, charges = nrg_fn(positions/10, force_field, None)
+    energy, charges = nrg_fn(positions/10, force_field, None, return_charges=True)
     energy = energy * KJ_TO_KCAL # TODO this doesn't seem like the cleanest solution to this
 
   #TODO decide if this should be kcal/mol or kj/mol, in addition what unit are forces here?
@@ -285,11 +285,19 @@ def calculate_loss(force_field,
   all_indiv_errors = dict()
   # Required functions for potential energy and force calculations
   if ff_type == "reaxff" or ff_type == "amber":
-    pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,None,None,None))
-    pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
-                                              has_aux=True),
-                          in_axes=(0,0,0,None,None,None))
-    pot_w_hessian_f = jax.vmap(energy_forces_hessian, in_axes=(0,0,0,None,None,None))
+    # TODO probably a better and more efficient way of doing this
+    if isinstance(force_field, list):
+      pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,0,None,None))
+      pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
+                                                has_aux=True),
+                            in_axes=(0,0,0,0,None,None))
+      pot_w_hessian_f = jax.vmap(energy_forces_hessian, in_axes=(0,0,0,0,None,None))
+    else:
+      pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,None,None,None))
+      pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
+                                                has_aux=True),
+                            in_axes=(0,0,0,None,None,None))
+      pot_w_hessian_f = jax.vmap(energy_forces_hessian, in_axes=(0,0,0,None,None,None))
   elif ff_type == "ambereem":
     pot_f = jax.vmap(calculate_energy_and_charges, in_axes=(0,0,0,0,None,None))
     pot_w_force_f = jax.vmap(jax.value_and_grad(calculate_energy_and_charges,
@@ -336,8 +344,8 @@ def calculate_loss(force_field,
       list_nbr = []
       ff = force_field[i]
     elif ff_type == "amber":
-      list_nbr = []
-      ff = force_field
+      list_nbr = [[] for _ in range(len(list_structure[i].name))]
+      ff = force_field[i]
     
     if hessian_flag:
       #https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html#jacobians-and-hessians-using-jacfwd-and-jacrev
@@ -983,8 +991,8 @@ def train_FF(params, param_indices, param_bounds, force_field,
   prev_true_loss = float('inf')
   global_min = float('inf')
   global_min_params = jnp.array(copy.deepcopy(params))
-  get_params_jit = jax.jit(get_params,static_argnums=(1,2,3))
-  set_params_jit = jax.jit(set_params,static_argnums=(1,3,4))
+  get_params_jit = jax.jit(get_params_clusters) # ff_clusters, targets, n_theta
+  set_params_jit = jax.jit(set_params_clusters) # ff_clusters, theta, targets
   total_f_ev = 0
   list_positions = [s.positions for s in list_structure]
   param_lower_flag = False
@@ -1004,10 +1012,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
       params = global_min_params
       param_lower_flag = True
 
-    if ff_type == "reaxff" or ff_type == "amber":
-      force_field = set_params_jit(force_field, param_indices, params, ff_type, opt_mode)
-    elif ff_type == "ambereem":
-      ffq_ff = set_params_jit(ffq_ff, param_indices, params, ff_type, opt_mode)
+    force_field = set_params_jit(force_field, params, param_indices)
     if e_minim_flag:
       minim_start = time.time()
       [list_positions, cur_total_energy,

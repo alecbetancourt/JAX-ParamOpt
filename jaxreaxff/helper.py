@@ -24,6 +24,7 @@ from jax_md.reaxff.reaxff_forcefield import ForceField
 import argparse
 from jax_md.amber.amber_helper import GAFFTYPES
 import h5py
+from collections import defaultdict
 
 # Since we shouldnt access the private API (jaxlib), create a dummy jax array
 # and get the type information from the array.
@@ -47,62 +48,90 @@ def build_float_range_checker(min_v, max_v):
     return val
   return range_checker
 
-def get_params(force_field, params_list, ff_type, opt_mode):
-  '''
-  Get the selected parameters from the force field
-  '''
-  if ff_type == "reaxff":
-    res = []
-    for param in params_list:
-      name = param[0]
-      index = param[1]
-      x = getattr(force_field, name)[index]
-      res.append(x)
-    return jnp.array(res)
-  # TODO is this redundant? probably need to examine original code to make sure this is all consistent
-  elif ff_type == "ambereem" or ff_type == "amber":
-    res = []
-    for param in params_list:
-      name = param[0]
-      index = param[1]
-      x = getattr(force_field, name)[index]
-      res.append(x)
-    # TODO this fixes some issues with type conversions but also doesn't seem safe
-    #return jnp.array(res, dtype=jnp.float64)
-    return jnp.array(res)
+def apply_params_field(base_arr, raveled, src, theta):
+  if raveled.size == 0:
+      return base_arr
+  updates = theta[src] # [T]
+  flat = base_arr.reshape(-1)
+  flat = flat.at[raveled].set(updates) # single fused scatter
+  return flat.reshape(base_arr.shape)
 
-def set_params(force_field, params_list, params, ff_type, opt_mode):
-  '''
-  Replace the selected parameters in the force field
-  '''
-  if ff_type == "reaxff":
-    attr_dict = dict()
-    for i,param in enumerate(params_list):
-      name = param[0]
-      index = param[1]
-      x = getattr(force_field, name)
-      attr_dict[name] = x
-    for i,param in enumerate(params_list):
-      name = param[0]
-      index = param[1]
-      attr_dict[name] = attr_dict[name].at[index].set(params[i])
-    new_ff = dataclasses.replace(force_field, **attr_dict)
-    new_ff = ForceField.fill_off_diag(new_ff)
-    new_ff = ForceField.fill_symm(new_ff)
-  elif ff_type == "ambereem" or ff_type == "amber":
-    attr_dict = dict()
-    for i,param in enumerate(params_list):
-      name = param[0]
-      index = param[1]
-      x = getattr(force_field, name)
-      attr_dict[name] = x
-    for i,param in enumerate(params_list):
-      name = param[0]
-      index = param[1]
-      attr_dict[name] = attr_dict[name].at[index].set(params[i])
-    new_ff = dataclasses.replace(force_field, **attr_dict)
+def set_params_clusters(ff_clusters, theta, targets):
+  # ff_clusters: list/tuple of dataclass ForceField, one per cluster, where each field has leading K_c axis
+  new_clusters = []
+  for c, ff in enumerate(ff_clusters):
+      # for each field present in ff, apply if we have targets
+      updates = {}
+      for fname in ff.__dataclass_fields__.keys():
+          if c in targets and fname in targets[c]:
+              r = targets[c][fname]["raveled"]
+              s = targets[c][fname]["src"]
+              arr = getattr(ff, fname)
+              updates[fname] = apply_params_field(arr, r, s, theta)
+          else:
+              updates[fname] = getattr(ff, fname)
+      new_clusters.append(dataclasses.replace(ff, **updates))
+  return new_clusters
 
-  return new_ff
+# unneeded with loss f_n wrapper but may have some use elsewhere
+# def segment_sum_field(grad_arr, raveled, src, n_theta):
+#   if raveled.size == 0:
+#       return jnp.zeros((n_theta,), grad_arr.dtype)
+#   g_slots = grad_arr.reshape(-1)[raveled]
+#   return jax.ops.segment_sum(g_slots, src, n_theta)
+
+# def grads_to_theta(grad_ff_clusters, targets, n_theta):
+#   g_theta = jnp.zeros((n_theta,), grad_ff_clusters[0].__dict__[
+#       next(iter(grad_ff_clusters[0].__dict__.keys()))
+#   ].dtype)
+#   for c, gff in enumerate(grad_ff_clusters):
+#       for fname, arr in gff.__dict__.items():
+#           if c in targets and fname in targets[c]:
+#               r = targets[c][fname]["raveled"]; s = targets[c][fname]["src"]
+#               g_theta = g_theta + segment_sum_field(arr, r, s, n_theta)
+#   return g_theta
+
+# alternative version that should work better for clusters
+def get_params_clusters(ff_clusters, targets, n_theta):
+  """
+  Returns a 1D array of length n_theta with parameter values in optimizer order,
+  read directly from the (clustered) force-field arrays.
+
+  ff_clusters: tuple/list of per-cluster FF dataclasses (arrays shaped (K_c, ...))
+  targets:     per (cluster, field) mapping from build_targets
+               tgt[c][fname] = {"raveled": int[t_idxs], "src": int[t_idxs]}
+  n_theta:     number of optimizer variables (size of flat 0)
+  """
+  vals_chunks = []
+  src_chunks  = []
+
+  for c, per_field in targets.items():
+    ff_c = ff_clusters[c]
+    for fname, spec in per_field.items():
+      r = spec["raveled"]
+      s = spec["src"]
+      if r.size == 0:
+          continue
+      arr = getattr(ff_c, fname) # shape (K_c, *inner)
+      vals = arr.reshape(-1)[r] # gather representatives for this (c, field)
+      vals_chunks.append(vals)
+      src_chunks.append(s)
+
+  if not vals_chunks:
+    # unlikely case where no targets are mapped; return zeros of an arbitrary dtype
+    # probably a more robust way to do this, set dtype based on precision, etc
+    return jnp.zeros((n_theta,), dtype=jnp.float32)
+
+  # trick using segment sum should reduce compilation burden compared to individual
+  # index into cluster values, need to test more and also ensure correctness
+  vals_all = jnp.concatenate(vals_chunks) # [T_total]
+  src_all  = jnp.concatenate(src_chunks) # [T_total], each in [0, n_theta)
+  # average across duplicates so that identical entries stay identical
+  sum_vals = jax.ops.segment_sum(vals_all,  src_all, n_theta) # [n_theta]
+  counts   = jax.ops.segment_sum(jnp.ones_like(vals_all), src_all, n_theta) # [n_theta]
+  params   = sum_vals / jnp.maximum(counts, 1)
+
+  return params
 
 def split_dataclass(data):
   '''
@@ -601,7 +630,13 @@ def read_geo_file(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
         reax_atom_types = onp.array(reax_atom_types)
       elif ff_type == "ambereem" or ff_type == "amber":
         #TODO just change this to atom types
-        reax_atom_types = [GAFFTYPES[name.lower()] for name in atom_names]
+        # if the map is a list, then each of the structures corresponds to the same index in the map list
+        # so it needs to be something like reax_atom_types = [name_to_index_map[str_idx][name] for name in atom_names]
+        if isinstance(name_to_index_map, list):
+          str_idx = len(list_systems)
+          reax_atom_types = [name_to_index_map[str_idx][name] for name in atom_names]
+        else:
+          reax_atom_types = [name_to_index_map[name] for name in atom_names]
         reax_atom_types = onp.array(reax_atom_types)
       atoms_positions = onp.array(atoms_positions)
       # box information
@@ -758,26 +793,87 @@ def read_parameter_file(params_file, ignore_sensitivity=1):
   params = []
   f = open(params_file,'r')
 
+  group_flag = False
+  # TODO the control flow for this function is kind of messy
+  # in the case of multiple force field files, the first index is the ff index
   for line in f:
     # remove comments
     line = line.split('!')[0]
     line = line.split('#')[0]
     split_line = line.strip().split()
+    if split_line[0] == "GROUP":
+      group_items = []
+      group_flag = True
+      sensitivity = float(split_line[1])
+      low_end = float(split_line[2])
+      high_end = float(split_line[3])
+      if ignore_sensitivity:
+        sensitivity = 1
+      if low_end > high_end:
+        temp = low_end
+        low_end = high_end
+        high_end = temp
+      continue
+    elif split_line[0] == "ENDGROUP":
+      group_flag = False
+      params.append((group_items, sensitivity, low_end, high_end))
+      continue
+    if group_flag == True:
+      # TODO can also just determine this based on line length
+      #if mode == "single":
+      if len(split_line) == 3:
+        section = int(split_line[0])
+        index1 = int(split_line[1])
+        index2 = int(split_line[2])
+        item = (section,index1,index2)
+      #elif mode == "multi":
+      elif len(split_line) == 4:
+        ff_index = int(split_line[0])
+        section = int(split_line[1])
+        index1 = int(split_line[2])
+        index2 = int(split_line[3])
+        item = (ff_index,section,index1,index2)
+      else:
+        raise ValueError("Error in reading group item from parameter file, should either be 3 or 4 columns")
+      group_items.append(item)
+      continue
+      # have to figure out how to group all of the items for a group
+    # TODO better error handling is needed
     if len(split_line) < 6:
       continue
-    section = int(split_line[0])
-    index1 = int(split_line[1])
-    index2 = int(split_line[2])
-    sensitivity = float(split_line[3])
-    low_end = float(split_line[4])
-    high_end = float(split_line[5])
-    if ignore_sensitivity:
-      sensitivity = 1
-    if low_end > high_end:
-      temp = low_end
-      low_end = high_end
-      high_end = temp
-    item = (section,index1,index2,sensitivity, low_end, high_end)
+    #if mode == "single":
+    if len(split_line) == 6:
+      section = int(split_line[0])
+      index1 = int(split_line[1])
+      index2 = int(split_line[2])
+      sensitivity = float(split_line[3])
+      low_end = float(split_line[4])
+      high_end = float(split_line[5])
+      if ignore_sensitivity:
+        sensitivity = 1
+      if low_end > high_end:
+        temp = low_end
+        low_end = high_end
+        high_end = temp
+      item = (section,index1,index2,sensitivity, low_end, high_end)
+    #elif mode == "multi":
+    elif len(split_line) == 7:
+      ff_index = int(split_line[0])
+      section = int(split_line[1])
+      index1 = int(split_line[2])
+      index2 = int(split_line[3])
+      sensitivity = float(split_line[4])
+      low_end = float(split_line[5])
+      high_end = float(split_line[6])
+      if ignore_sensitivity:
+        sensitivity = 1
+      if low_end > high_end:
+        temp = low_end
+        low_end = high_end
+        high_end = temp
+      item = (ff_index,section,index1,index2,sensitivity, low_end, high_end)
+    else:
+      raise ValueError("Error in reading item from parameter file, should either be 6 or 7 columns")
     params.append(item)
   return params
 
@@ -786,14 +882,155 @@ def map_params(params, index_map):
   Map the read parameters to new type of indexing to select them from
   a given force field object
   '''
+  # TODO this can probably be removed and folded into the cluster target generation
+  # index map can either be for a single ff object
+  # or can be a list of ff objects where .params_to_indices
+  # is the map for each ff in the list
+  # in that case, the format will be p[0:3] where p[0] is the ff index in the list
+  # and p[1],p[2],p[3] are the indicies into the map for that ff
+
+  # params can either be
+  # (ff_index,section,index1,index2,sensitivity, low_end, high_end)
+  # (section,index1,index2,sensitivity, low_end, high_end)
+  # (group_items, sensitivity, low_end, high_end)
+  
   new_params = []
+  
   for p in params:
+    if len(p) not in [4,6,7]:
+      raise ValueError("Error in parameter format, should either be 4,6 or 7 items per line")
+    if len(p) == 4: # group item
+      group_item = []
+      for item in p[0]:
+        ff_index,section,index1,index2 = item
+        idx_map = index_map[ff_index].params_to_indices
+        key = (section,index1,index2)
+        value = idx_map[key]
+        group_item.append((value,ff_index))
+      # lists aren't hashable
+      new_item = (("group", tuple(group_item)), p[1],p[2],p[3])
+      new_params.append(new_item)
+    elif len(p) == 6: # single ff item
+      if isinstance(index_map, list):
+        raise ValueError("Error in parameter mapping, cannot have single ff item with multiple ff index map")
       key = (p[0],p[1],p[2])
-      value = index_map[key]
+      value = ("single", index_map[key])
       new_item = (value, p[3],p[4],p[5])
       new_params.append(new_item)
+    elif len(p) == 7: # multi ff item
+      if not isinstance(index_map, list):
+        raise ValueError("Error in parameter mapping, cannot have multi ff item with single ff index map")
+      idx_map = index_map[p[0]].params_to_indices
+      key = (p[1],p[2],p[3])
+      value = ("multi", p[0], idx_map[key])
+      new_item = (value, p[4],p[5],p[6])
+      new_params.append(new_item)
+
   return new_params
 
+# with the current structure for single/multi/group params
+#  - ("single", ('sigma', (i,)))
+#  - ("multi", ff_idx, ('sigma', (i,)))
+#  - ("group", ((('sigma',(i0,)), ff_idx0), (('sigma',(i1,)), ff_idx1), ...))
+#
+# and given:
+#  - all_cut_indices: List[List[int]]  # e.g., [[0,1,4], [2,3,5]] for 2 clusters
+#  - field_shapes: Dict[field_name, Dict[cluster_id, Tuple[int,...]]]  # inner shapes for alignment
+
+def global_to_cluster_ff(all_cut_indices):
+  # returns dict: global_ff_idx -> (cluster_id, local_ff_idx)
+  lut = {}
+  for c, ff_ids in enumerate(all_cut_indices):
+    for local, g in enumerate(ff_ids):
+      lut[g] = (c, local)
+  return lut
+
+def ravel_for_cluster(cluster_k, inner_shape, local_ff_idx, inner_idx):
+  # inner_idx is a tuple like (i,) or (i,j, ...)
+  # shape = (cluster_k,) + inner_shape
+  shape = inner_shape
+  multi = (local_ff_idx,) + inner_idx
+  return jnp.ravel_multi_index(jnp.array(multi), jnp.array(shape)).item()
+
+def build_targets(params_list, all_cut_indices, force_field):
+  g2c = global_to_cluster_ff(all_cut_indices)
+
+  # TODO some of this probably isn't needed after making the changes to get and
+  # set params, probably just need the cluster targetes
+  # targets[cluster_id][field_name] -> dict with python lists
+  targets = defaultdict(lambda: defaultdict(lambda: {"raveled": [], "src": []}))
+  # for reporting current values
+  src_single, src_multi, src_group_rep = [], [], []
+
+  theta_src = 0  # walk through optimizer vector positions
+  for entry in params_list:
+    tag = entry[0]
+
+    if tag == "single":
+      field_name, inner_idx = entry[1] # ('sigma', (i,))
+      # single implies one FF (global) -> treat as "multi" with chosen FF (here 0th or fixed)
+      # in single-FF run, there's only one FF object -> it belongs to exactly one cluster with K_c==1.
+      # if only one ff globally, put its global ff_idx in config; here assume 0
+      global_ff_idx = 0
+      c, local = g2c[global_ff_idx]
+      Kc = len(all_cut_indices[c])
+      inner_shape = force_field[c][field_name].shape
+      rav = ravel_for_cluster(Kc, inner_shape, local, inner_idx)
+      targets[c][field_name]["raveled"].append(rav)
+      targets[c][field_name]["src"].append(theta_src)
+
+      src_single.append(theta_src)
+      theta_src += 1
+
+    elif tag == "multi":
+      global_ff_idx = entry[1]
+      field_name, inner_idx = entry[2]
+      c, local = g2c[global_ff_idx]
+      Kc = len(all_cut_indices[c])
+      inner_shape = force_field[c][field_name].shape
+      rav = ravel_for_cluster(Kc, inner_shape, local, inner_idx)
+      targets[c][field_name]["raveled"].append(rav)
+      targets[c][field_name]["src"].append(theta_src)
+
+      src_multi.append(theta_src)
+      theta_src += 1
+
+    elif tag == "group":
+      group_items = entry[1]  # tuple of ((field_name, inner_idx), global_ff_idx)
+      # one optimizer source for the whole group:
+      group_src = theta_src
+      # choose representative for "get params" reporting (e.g., first):
+      src_group_rep.append(group_src)
+      # push each target in the group
+      for ((field_name, inner_idx), global_ff_idx) in group_items:
+        c, local = g2c[global_ff_idx]
+        Kc = len(all_cut_indices[c])
+        # this may not be very efficient, can't it be replaced with max_sizes?
+        inner_shape = getattr(force_field[c],field_name).shape
+        rav = ravel_for_cluster(Kc, inner_shape, local, inner_idx)
+        targets[c][field_name]["raveled"].append(rav)
+        targets[c][field_name]["src"].append(group_src)
+      theta_src += 1
+
+    else:
+      raise ValueError(f"Unknown param tag: {tag}")
+
+  # convert python lists -> jnp arrays (int32) for each (cluster, field)
+  tgt = {}
+  for c, fields in targets.items():
+    tgt[c] = {}
+    for fname, d in fields.items():
+      r = jnp.array(d["raveled"], dtype=jnp.int32)
+      s = jnp.array(d["src"],     dtype=jnp.int32)
+      tgt[c][fname] = {"raveled": r, "src": s}
+
+  report_src = {
+    "single": jnp.array(src_single, dtype=jnp.int32),
+    "multi":  jnp.array(src_multi,  dtype=jnp.int32),
+    "group":  jnp.array(src_group_rep, dtype=jnp.int32),
+  }
+  n_theta = theta_src
+  return tgt, report_src, n_theta
 
 def read_train_set(train_in):
   '''
