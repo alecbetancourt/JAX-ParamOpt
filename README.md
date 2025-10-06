@@ -69,7 +69,7 @@ conda activate jax-env
 ```
 pip install .
 ```
-After the setup, Jax-ReaxFF can be accessed via command line interface(CLI) with **jaxparamopt**
+After the setup, JAX-ParamOpt can be accessed via command line interface(CLI) with **jaxparamopt**
 
 To test the installation on a CPU (The JIT compilation time for CPUs drastically higher):
 ```
@@ -96,20 +96,20 @@ After installing the GPU version, the script will automatically utilize the GPU.
 
 #### Using Validation Data
 ```
-jaxreaxff --init_FF Datasets/disulfide/ffield_lit             \
-          --params Datasets/disulfide/params                  \
-          --geo Datasets/disulfide/geo                        \
-          --train_file Datasets/disulfide/trainset.in         \
-          --use_valid True                                    \
-          --valid_file Datasets/disulfide/valSet/trainset.in  \
-          --valid_geo_file Datasets/disulfide/valSet/geo      \
-          --num_e_minim_steps 200                             \
-          --e_minim_LR 1e-3                                   \
-          --out_folder ffields                                \
-          --save_opt all                                      \
-          --num_trials 1                                      \
-          --num_steps 20                                      \
-          --init_FF_type fixed                             
+jaxparamopt --init_FF Datasets/disulfide/ffield_lit             \
+            --params Datasets/disulfide/params                  \
+            --geo Datasets/disulfide/geo                        \
+            --train_file Datasets/disulfide/trainset.in         \
+            --use_valid True                                    \
+            --valid_file Datasets/disulfide/valSet/trainset.in  \
+            --valid_geo_file Datasets/disulfide/valSet/geo      \
+            --num_e_minim_steps 200                             \
+            --e_minim_LR 1e-3                                   \
+            --out_folder ffields                                \
+            --save_opt all                                      \
+            --num_trials 1                                      \
+            --num_steps 20                                      \
+            --init_FF_type fixed                             
 ``` 
 
 #### Additional Documentation
