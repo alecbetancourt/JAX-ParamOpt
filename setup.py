@@ -50,7 +50,11 @@ INSTALL_REQUIRES = [
   'tabulate>=0.8.9',
   'frozendict',
   'tqdm',
-  'optax'
+  'optax',
+  'jax_md @ git+https://github.com/alecbetancourt/jax-md.git@amber#egg=jax_md',
+  'numpy',
+  'numba',
+  'evosax'
 ]
 
 # https://packaging.python.org/guides/making-a-pypi-friendly-readme/
@@ -59,17 +63,16 @@ with io.open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
   long_description = f.read()
   
 setup(
-   name='jaxreaxff',
-   version='0.2.0',
-   author='Mehmet Cagri Kaymak',
-   author_email='cagrikymk@gmail.com',
-   packages=["jaxreaxff"],
-   entry_points={'console_scripts': ['jaxreaxff=jaxreaxff.driver:main',
-                                     'jaxreaxffv2=jaxreaxff.driver_v2:main']
+   name='jaxparamopt',
+   version='0.1.0',
+   author='William Betancourt',
+   author_email='alecbetancourt@gmail.com',
+   packages=["jaxparamopt"],
+   entry_points={'console_scripts': ['jaxparamopt=jaxparamopt.driver:main']
                 },
-   url='https://github.com/cagrikymk/JAX-ReaxFF',
+   url='https://github.com/alecbetancourt/JAX-ParamOpt',
    license='LICENSE',
-   description='A gradient based framework for fast optimization of ReaxFF',
+   description='A gradient based framework for force field parameter optimization',
    long_description=long_description,
    long_description_content_type='text/markdown',
    python_requires='>=3.7',

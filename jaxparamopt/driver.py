@@ -22,28 +22,28 @@ from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
 from jax_md.reaxff.reaxff_forcefield import ForceField
 from jax_md.reaxff.reaxff_helper import read_force_field
 from jax_md import dataclasses
-from jaxreaxff.optimizer import (calculate_loss, 
+from jaxparamopt.optimizer import (calculate_loss, 
                                  calculate_energy_and_charges_w_rest, 
                                  add_noise_to_params, random_parameter_search, 
                                  train_FF, energy_minimize, update_inter_sizes) 
-from jaxreaxff.helper import set_params_clusters, get_params_clusters, produce_error_report, build_targets
-from jaxreaxff.interactions import (reaxff_interaction_list_generator, 
+from jaxparamopt.helper import set_params_clusters, get_params_clusters, produce_error_report, build_targets
+from jaxparamopt.interactions import (reaxff_interaction_list_generator, 
                                     calculate_dist_and_angles, 
                                     DYNAMIC_INTERACTION_KEYS)
-from jaxreaxff.structure import align_structures
-from jaxreaxff.helper import (move_dataclass, process_and_cluster_geos, 
+from jaxparamopt.structure import align_structures
+from jaxparamopt.helper import (move_dataclass, process_and_cluster_geos, 
                               create_structure_map, read_parameter_file, 
                               map_params, read_geo_file, read_train_set, 
                               filter_data, structure_training_data,
                               parse_and_save_force_field)
 import math
 from functools import partial
-from jaxreaxff.helper import build_float_range_checker
-from jaxreaxff.structure_amber import (load_amber_ff_batch, load_amber_ff_v2, map_params_amber,
+from jaxparamopt.helper import build_float_range_checker
+from jaxparamopt.structure_amber import (load_amber_ff_batch, load_amber_ff_v2, map_params_amber,
                                        process_and_cluster_geos_amber,
                                        process_and_cluster_ff_amber,
                                        align_ff_amber, parse_and_save_force_field_amber)
-from jaxreaxff.helper_prmtop import build_prm_list
+from jaxparamopt.helper_prmtop import build_prm_list
 from jax_md.amber.amber_energy_v2 import amber_energy
 from jax_md.amber.amber_helper import load_amber_ff
 from scipy import optimize

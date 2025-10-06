@@ -5,8 +5,8 @@ from jax_md.dataclasses import fields #TODO make sure any invocations of this ar
 
 from jax_md.amber.amber_helper import load_amber_ff, load_ffq_ff, GAFFTYPES
 from jax_md.amber.amber_forcefield import AmberForceField
-from jaxreaxff.helper_prmtop import build_prm_list
-from jaxreaxff.structure import align_structures, align_and_batch_structures
+from jaxparamopt.helper_prmtop import build_prm_list
+from jaxparamopt.structure import align_structures, align_and_batch_structures
 from concurrent.futures import ThreadPoolExecutor
 import time
 import os

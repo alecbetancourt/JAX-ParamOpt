@@ -19,14 +19,14 @@ from jax_md.dataclasses import replace, fields, is_dataclass
 from jax_md.util import safe_mask
 from jax_md.reaxff.reaxff_forcefield import ForceField
 from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
-from jaxreaxff.helper import split_dataclass, count_inter_list_sizes, move_dataclass
-from jaxreaxff.helper import filter_dataclass, set_params_clusters, get_params_clusters
-from jaxreaxff.interactions import calculate_dist_and_angles, calculate_dist
+from jaxparamopt.helper import split_dataclass, count_inter_list_sizes, move_dataclass
+from jaxparamopt.helper import filter_dataclass, set_params_clusters, get_params_clusters
+from jaxparamopt.interactions import calculate_dist_and_angles, calculate_dist
 from frozendict import frozendict
 import os
 import logging
 import math
-from jaxreaxff.interactions import DYNAMIC_INTERACTION_KEYS
+from jaxparamopt.interactions import DYNAMIC_INTERACTION_KEYS
 import time
 from jax_md.amber.amber_energy_v2 import amber_energy
 from libdlfind import dl_find
@@ -40,7 +40,7 @@ import subprocess
 import pickle
 from frozendict import frozendict
 from jax_md.amber.amber_forcefield import AmberForceField, FFQForceField
-from jaxreaxff.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
+from jaxparamopt.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
 
 # TODO move these constants elsewhere
 rdndgr = 180.0/onp.pi

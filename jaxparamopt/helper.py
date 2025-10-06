@@ -14,11 +14,11 @@ from multiprocessing import get_context
 from tabulate import tabulate
 import math
 import copy
-from jaxreaxff.clustering import modified_kmeans
-from jaxreaxff.trainingdata import ChargeItem, EnergyItem, DistItem, AngleItem 
-from jaxreaxff.trainingdata import TorsionItem, ForceItem, RMSGItem, HessianItem, TrainingData
-from jaxreaxff.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
-from jaxreaxff.inter_list_counter import pool_handler_for_inter_list_count
+from jaxparamopt.clustering import modified_kmeans
+from jaxparamopt.trainingdata import ChargeItem, EnergyItem, DistItem, AngleItem 
+from jaxparamopt.trainingdata import TorsionItem, ForceItem, RMSGItem, HessianItem, TrainingData
+from jaxparamopt.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
+from jaxparamopt.inter_list_counter import pool_handler_for_inter_list_count
 from jax_md import dataclasses
 from jax_md.reaxff.reaxff_forcefield import ForceField
 import argparse

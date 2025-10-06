@@ -8,18 +8,18 @@ from absl.testing import parameterized
 from jax_md import dataclasses
 from jax_md.reaxff.reaxff_forcefield import ForceField
 from jax_md.reaxff.reaxff_helper import read_force_field
-from jaxreaxff.helper import (move_dataclass,
+from jaxparamopt.helper import (move_dataclass,
                               process_and_cluster_geos,
                               create_structure_map,
                               read_geo_file,
                               count_inter_list_sizes)
-from jaxreaxff.structure import align_structures
-from jaxreaxff.interactions import reaxff_interaction_list_generator
+from jaxparamopt.structure import align_structures
+from jaxparamopt.interactions import reaxff_interaction_list_generator
 import pickle
 from frozendict import frozendict
 
 from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
-from jaxreaxff.interactions import calculate_dist_and_angles
+from jaxparamopt.interactions import calculate_dist_and_angles
 
 ATOL = 1e-3
 RTOL = 1e-4

@@ -23,7 +23,7 @@ from libdlfind.callback import (dlf_get_gradient_wrapper,
                                 dlf_put_coords_wrapper, make_dlf_get_params)
 from jax_md.amber.amber_forcefield import AmberForceField, FFQForceField
 from jax_md.amber.amber_energy_v2 import amber_energy
-from jaxreaxff.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
+from jaxparamopt.structure import Structure, BondRestraint, AngleRestraint, TorsionRestraint
 import functools
 from frozendict import frozendict
 
