@@ -61,9 +61,10 @@ cd JAX-ParamOpt
 
 **3-** The installation can be done in a conda environment:
 ```
-conda create -n jax-env python=3.10
+conda create -n jax-env python
 conda activate jax-env
 ```
+
 **4-** JAX-ParamOpt is installed with the following command:
 ```
 pip install .
