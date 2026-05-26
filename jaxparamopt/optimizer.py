@@ -270,6 +270,44 @@ def energy_forces_hessian(positions,
                                  ffq_ff)
   return (energy, charges), forces, hessian
 
+def reduce_metric(residual, weight, metric, huber_delta=1.0, is_force=False, is_hess=False):
+  """
+  residual = (pred - target)
+  weight   = per-sample weight; same shape as residual w/o vector dim
+  metric   = static string specifying metric
+  huber_delta = delta value for huber loss
+  is_force = if true, residuals will be (n,3)
+  is_hess = if true, residuals will be (n,n,3,3)
+  """
+  if is_force:
+    w = weight.reshape(-1,1)
+  elif is_hess:
+    w = weight.reshape(-1,1,1)
+  else:
+    w = weight
+
+  r = residual
+  denom = jnp.sum(w) # assumes weight is > 0
+
+  if metric == "sse":
+    return jnp.sum(w * r**2)
+  elif metric == "rmse":
+    return jnp.sqrt(jnp.sum(w * r**2) / denom)
+  elif metric == "mae":
+    return jnp.sum(w * jnp.abs(r)) / denom
+  elif metric == "mse":
+    return jnp.sum(w * r**2) / denom
+  elif metric == "huber":
+    a = jnp.abs(r)
+    quad = 0.5 * r**2
+    lin  = huber_delta * (a - 0.5 * huber_delta)
+    loss = jnp.where(a <= huber_delta, quad, lin)
+    return jnp.sum(w * loss) / denom
+  elif metric == "logcosh":
+    return jnp.sum(w * jnp.log(jnp.cosh(r))) / denom
+  elif metric == "sum":
+    return jnp.sum(w * r**2)
+
 def calculate_loss(force_field,
                     list_positions,
                     list_structure,
@@ -277,7 +315,8 @@ def calculate_loss(force_field,
                     training_data,
                     return_indiv_error=False,
                     ff_type="reaxff",
-                    ffq_ff=None):
+                    ffq_ff=None,
+                    metric="sse"):
   '''
   Calculate the loss function
   '''
@@ -421,21 +460,30 @@ def calculate_loss(force_field,
     #jax.debug.print("energy items preds {}", energy_preds)
 
     # TODO add RMSE/MSE/SSE flag
-    energy_errors = ((energy_items.target - energy_preds) /
-                            energy_items.weight) ** 2
-    # TODO if debug print individual errors
-    # if debug > 1:
-    #   jax.debug.print("energy errors {}", energy_errors)
-    energy_error = jnp.sum(energy_errors)
+    # energy_errors = ((energy_items.target - energy_preds) /
+    #                         energy_items.weight) ** 2
+    # # TODO if debug print individual errors
+    # # if debug > 1:
+    # #   jax.debug.print("energy errors {}", energy_errors)
+    # energy_error = jnp.sum(energy_errors)
+    # total_error += energy_error
+
+    energy_residual = energy_items.target - energy_preds
+    energy_errors = jnp.abs(energy_residual)
+    energy_error = reduce_metric(energy_residual, energy_items.weight, metric)
     total_error += energy_error
     if return_indiv_error:
       all_indiv_errors['ENERGY'] = [energy_preds, energy_items.target, energy_errors]
   if training_data.charge_items != None:
     charge_items = training_data.charge_items
     charge_preds = all_charges[charge_items.sys_ind,charge_items.a_ind]
-    charge_errors = ((charge_items.target - charge_preds) /
-                           charge_items.weight) ** 2
-    charge_error = jnp.sum(charge_errors)
+    # charge_errors = ((charge_items.target - charge_preds) /
+    #                        charge_items.weight) ** 2
+    # charge_error = jnp.sum(charge_errors)
+    # total_error += charge_error
+    charge_residual = charge_items.target - charge_preds
+    charge_errors = jnp.abs(charge_residual)
+    charge_error = reduce_metric(charge_residual, charge_items.weight, metric)
     total_error += charge_error
     if return_indiv_error:
       all_indiv_errors['CHARGE'] = [charge_preds, charge_items.target, charge_errors]
@@ -444,9 +492,13 @@ def calculate_loss(force_field,
     # forces: -1 * grads
     all_forces = all_forces * -1
     force_preds = all_forces[force_items.sys_ind,force_items.a_ind]
-    force_errors = ((force_items.target - force_preds) /
-                           force_items.weight.reshape(-1,1)) ** 2
-    force_error = jnp.sum(force_errors)
+    # force_errors = ((force_items.target - force_preds) /
+    #                        force_items.weight.reshape(-1,1)) ** 2
+    # force_error = jnp.sum(force_errors)
+    # total_error += force_error
+    force_residual = force_items.target - force_preds
+    force_errors = jnp.abs(force_residual)
+    force_error = reduce_metric(force_residual, force_items.weight, metric, is_force=True)
     total_error += force_error
     if return_indiv_error:
       all_indiv_errors['FORCE'] = [force_preds, force_items.target, force_errors]
@@ -462,9 +514,16 @@ def calculate_loss(force_field,
     # could store flat in segments of 9*N
     # assuming things are stored as total_struc*NxN,3,3 instead of total_struc,N,N,3,3
     # hessian_preds = all_hessians[hessian_items.sys_ind, 3*i_0:3*(i_0+1), 3*i_1:3*(i_1+1)]
-    hessian_errors = ((hessian_items.target - hessian_preds) /
-                           hessian_items.weight.reshape(-1,1,1)) ** 2
-    hessian_error = jnp.sum(hessian_errors)
+    # TODO think about other ways to calculate hessian error
+    # blockwise frobenius norm, frequency analysis, component-wise, etc
+    # a simple comparison like this may result in overweighting
+    # hessian_errors = ((hessian_items.target - hessian_preds) /
+    #                        hessian_items.weight.reshape(-1,1,1)) ** 2
+    # hessian_error = jnp.sum(hessian_errors)
+    # total_error += hessian_error
+    hessian_residual = hessian_items.target - hessian_preds
+    hessian_errors = jnp.abs(hessian_residual)
+    hessian_error = reduce_metric(hessian_residual, hessian_items.weight, metric, is_hess=True)
     total_error += hessian_error
     if return_indiv_error:
       all_indiv_errors['HESSIAN'] = [hessian_preds, hessian_items.target, hessian_errors]
@@ -514,6 +573,8 @@ def calculate_loss(force_field,
     # TODO if debug print individual errors, already partially implemented
     # with return_indiv_error or debug > 1
     # print("torsion errors", torsion_errors)
+    # TODO fix non sse error metrics for geometric training items
+    # TODO also add more geometric training items
     torsion_error = jnp.sum(torsion_errors)
     total_error += torsion_error
     if return_indiv_error:
@@ -951,20 +1012,13 @@ def lower_bounds(params, bounds, advanced_opts):
   new_bounds = onp.array(new_bounds, dtype=bounds.dtype)
   return new_bounds
 
-def random_parameter_search(bounds, sample_count,
-                            param_indices, force_field, training_data,
-                            list_positions, aligned_data, center_sizes,
-                            loss_func, ff_type, opt_mode, ffq_ff):
-
-  args = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes, ff_type, opt_mode, ffq_ff)
-  dtype = force_field.gamma.dtype
+def random_parameter_search(bounds, sample_count, loss_func, dtype, loss_args):
   min_loss = float('inf')
   min_params = None
   for _ in range(sample_count):
     selected_params = onp.random.uniform(low=bounds[:,0],high=bounds[:,1])
     selected_params = jnp.array(selected_params, dtype=dtype)
-    loss = loss_func(selected_params, *args)
+    loss = loss_func(selected_params, *loss_args)
     if loss < min_loss or onp.isnan(min_loss) == True:
       min_loss = loss
       min_params = selected_params
@@ -983,7 +1037,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
              validation_data,
              iter_count, e_minim_flag, optimizer, optim_options,
              advanced_opts,
-             loss_and_grad_func, minim_func, allocate_func, ff_type, opt_mode, ffq_ff):
+             loss_and_grad_func, minim_func, allocate_func, ff_type, opt_mode, ffq_ff, metric):
   '''
   Main parameter optimization routine
   '''
@@ -1053,7 +1107,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
     true_train_loss, _ = loss_and_grad_func(params, param_indices,
                                               force_field, training_data,
                                               list_positions, list_structure,
-                                              center_sizes, ff_type, opt_mode, ffq_ff)
+                                              center_sizes, ff_type, opt_mode, ffq_ff, metric)
     true_train_loss = float(true_train_loss)
     # calculate the validation loss
     # if valid. data is available, total loss = valid loss + train loss
@@ -1061,7 +1115,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
       true_valid_loss, _ = loss_and_grad_func(params, param_indices,
                                             force_field, validation_data,
                                             list_positions, list_structure,
-                                            center_sizes, ff_type, opt_mode, ffq_ff)
+                                            center_sizes, ff_type, opt_mode, ffq_ff, metric)
       true_valid_loss = float(true_valid_loss)
       print("True training loss: {:.2f}".format(true_train_loss))
       print("True validation loss: {:.2f}".format(true_valid_loss))
@@ -1086,7 +1140,7 @@ def train_FF(params, param_indices, param_bounds, force_field,
     if e < iter_count:
       args = (param_indices,
               force_field, training_data,
-              list_positions, list_structure, center_sizes, ff_type, opt_mode, ffq_ff)
+              list_positions, list_structure, center_sizes, ff_type, opt_mode, ffq_ff, metric)
       min_state = minimize(loss_and_grad_func, params, jac=True, args=args,
                            method=optimizer,
                            bounds=param_bounds,options=optim_options)

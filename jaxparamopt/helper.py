@@ -974,7 +974,10 @@ def build_targets(params_list, all_cut_indices, force_field):
       global_ff_idx = 0
       c, local = g2c[global_ff_idx]
       Kc = len(all_cut_indices[c])
-      inner_shape = force_field[c][field_name].shape
+      print("c val", c, local)
+      #inner_shape = force_field[c][field_name].shape
+      #inner_shape = force_field[field_name].shape
+      inner_shape = getattr(force_field[c],field_name).shape
       rav = ravel_for_cluster(Kc, inner_shape, local, inner_idx)
       targets[c][field_name]["raveled"].append(rav)
       targets[c][field_name]["src"].append(theta_src)
@@ -987,7 +990,8 @@ def build_targets(params_list, all_cut_indices, force_field):
       field_name, inner_idx = entry[2]
       c, local = g2c[global_ff_idx]
       Kc = len(all_cut_indices[c])
-      inner_shape = force_field[c][field_name].shape
+      #inner_shape = force_field[c][field_name].shape
+      inner_shape = getattr(force_field[c],field_name).shape
       rav = ravel_for_cluster(Kc, inner_shape, local, inner_idx)
       targets[c][field_name]["raveled"].append(rav)
       targets[c][field_name]["src"].append(theta_src)

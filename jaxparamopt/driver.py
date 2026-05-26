@@ -44,10 +44,11 @@ from jaxparamopt.structure_amber import (load_amber_ff_batch, load_amber_ff_v2, 
                                        process_and_cluster_ff_amber,
                                        align_ff_amber, parse_and_save_force_field_amber)
 from jaxparamopt.helper_prmtop import build_prm_list
+from jaxparamopt.global_opt import global_optimization
 from jax_md.amber.amber_energy_v2 import amber_energy
 from jax_md.amber.amber_helper import load_amber_ff
-from scipy import optimize
-from scipy.stats import qmc
+#from scipy import optimize
+#from scipy.stats import qmc
 import evosax
 
 # TODO look through argparse documentation and add any relevant information, also potentially separate into module
@@ -99,6 +100,11 @@ def main():
       type=int,
       default=5,
       help='Number of optimization steps per trial')
+  parser.add_argument('--loss_metric', metavar='method',
+    choices=['sse', 'mse', 'rmse', 'mae', 'huber', 'logcosh', 'sum'],
+    type=str,
+    default='sse',
+    help='Scoring metric to use in loss function, either "sse", "rmse"')
 
   def validate_init_type(value):
     closed_choices = ['random', 'educated', 'fixed', 'cmaes', 'openes', 'pgpe', 'snes', 'lga', 'diffev', 'shgo', 'direct', 'basin', 'sobol', 'adaptive']
@@ -528,7 +534,38 @@ def main():
                      , "target_RMSG":args.end_RMSG, "ff_type":args.ff_type}
   minim_func = partial(energy_minimize, **minimize_kwargs)
   
-  loss_func = jax.jit(calculate_loss, static_argnames=('return_indiv_error','ff_type'))
+  loss_func = jax.jit(calculate_loss, static_argnames=('return_indiv_error','ff_type','metric'))
+
+  # in the single force field case, the object will be structured like a single cluster
+  # with a leading axis of size 1 to avoid conditional branching
+  def _expand_leading_axis_ff(ff):
+    """Return a new FF with a leading axis (Kc=1) added to every array field."""
+    kv = {}
+    for f in dataclasses.fields(ff):
+      arr = getattr(ff, f.name)
+      if isinstance(arr, jax.Array):
+        kv[f.name] = jnp.expand_dims(jnp.asarray(arr), 0)  # (1, *inner)
+    return dataclasses.replace(ff, **kv)
+
+  def ensure_clustered(ff_or_clusters):
+      """
+      Normalize to: (tuple_of_clusters, all_cut_indices)
+      - tuple_of_clusters: each cluster FF has fields shaped (Kc, *inner)
+      - all_cut_indices: list of lists mapping global FF ids per cluster
+      """
+      if isinstance(ff_or_clusters, (list, tuple)):
+          # Already clustered; make sure it's a tuple for stable pytrees
+          clusters = tuple(ff_or_clusters)
+          # Caller should supply all_cut_indices for multi-FF; we don't infer here
+          return clusters
+      else:
+          # Single FF → one cluster with Kc=1
+          return (_expand_leading_axis_ff(ff_or_clusters),)
+  
+  # multi-FF: use real all_cut_indices (e.g., [[0,1,4],[2,3,5],...])
+  # single-FF: use [[0]]
+  all_cut_indices = all_cut_indices if isinstance(force_field, (list, tuple)) else [[0]]
+  force_field = ensure_clustered(force_field)
 
   # remap the parameter indices based on clustering
   target_start_time = time.time()
@@ -547,7 +584,8 @@ def main():
                     training_data,
                     return_indiv_error,
                     ff_type,
-                    ffq_ff):
+                    ffq_ff,
+                    metric):
     # inject theta into clustered FFs with ONE scatter per (cluster, field)
     # TODO consider removing all but the outer jit here
     # set and loss_func are both jit, but jit of v_g may optimize better
@@ -560,10 +598,12 @@ def main():
                                 training_data,
                                 return_indiv_error,
                                 ff_type,
-                                ffq_ff)
+                                ffq_ff,
+                                metric)
 
   # value_and_grad wrt theta
-  val_and_grad = jax.jit(jax.value_and_grad(wrapped_loss), static_argnames=('return_indiv_error','ff_type'))
+  # TODO this jit might not be needed because of the jit above or vice versa
+  val_and_grad = jax.jit(jax.value_and_grad(wrapped_loss), static_argnames=('return_indiv_error','ff_type','metric'))
 
   def new_loss_and_grad_func(params, param_indices, ff_clusters,
                               training_data,
@@ -572,7 +612,8 @@ def main():
                               center_sizes,
                               ff_type,
                               opt_mode,
-                              ffq_ff):
+                              ffq_ff,
+                              metric):
     if ff_type == "reaxff":
       all_inters = [allocate_func(list_positions[i], aligned_data[i], 
                                   force_field, center_sizes[i])[0] 
@@ -592,7 +633,8 @@ def main():
                                   training_data,
                                   False,
                                   ff_type,
-                                  ffq_ff)
+                                  ffq_ff,
+                                  metric)
 
     return loss, grad
 
@@ -604,6 +646,7 @@ def main():
                               ff_type,
                               opt_mode,
                               ffq_ff,
+                              metric,
                               return_indiv_error = False):
     if ff_type == "reaxff":
       all_inters = [allocate_func(list_positions[i], aligned_data[i], 
@@ -619,7 +662,8 @@ def main():
                                   training_data,
                                   return_indiv_error,
                                   ff_type,
-                                  ffq_ff)
+                                  ffq_ff,
+                                  metric)
     if return_indiv_error:
       loss, indiv_errors = results
     else:
@@ -667,233 +711,24 @@ def main():
     print('*' * 40)
     print("Trial-{} is starting...".format(i+1))
     start = time.time()
-    if args.init_FF_type == 'random':
-      min_params = random_parameter_search(bounds, random_sample_count,
-                                  param_indices, force_field, training_data,
-                                  list_positions, aligned_data, center_sizes,
-                                  new_loss_func, args.ff_type, args.opt_mode, ffq_ff)
-      selected_params = min_params
-    elif args.init_FF_type == 'educated':
-      selected_params = add_noise_to_params(init_params, bounds, scale=0.1)
-    elif args.init_FF_type == 'fixed': # fixed
-      selected_params = jnp.array(init_params)
-    # Scipy based global optimization
-    elif args.init_FF_type == 'sobol':
-      #m for random_base2 is a power of 2
-      m = int(jnp.log2(args.random_sample_count))
-      print(f"Random sample count is truncated from {args.random_sample_count} to nearest power of 2, {m}, for efficiency reasons")
-      args_loss = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes, args.ff_type, args.opt_mode, ffq_ff)
-      sampler = qmc.Sobol(d=len(bounds), scramble=False)
-      sample = sampler.random_base2(m=m)
-      # scale random distribution to bounds
-      # TODO does this preserve the properties of the sequence?
-      sample = qmc.scale(sample, bounds[:, 0], bounds[:, 1])
+    # replace with call to global_optimization()
+    loss_args = (param_indices, force_field, training_data, list_positions,
+                  aligned_data, center_sizes, args.ff_type, args.opt_mode,
+                  ffq_ff, args.loss_metric)
+    selected_params = global_optimization(init_params, bounds, args.random_sample_count,
+                                          args.init_FF_type, new_loss_func,
+                                          new_loss_and_grad_func, TYPE, loss_args)
+    # if args.init_FF_type == 'random':
+    #   min_params = random_parameter_search(bounds, random_sample_count,
+    #                               param_indices, force_field, training_data,
+    #                               list_positions, aligned_data, center_sizes,
+    #                               new_loss_func, args.ff_type, args.opt_mode, ffq_ff)
+    #   selected_params = min_params
+    # elif args.init_FF_type == 'educated':
+    #   selected_params = add_noise_to_params(init_params, bounds, scale=0.1)
+    # elif args.init_FF_type == 'fixed': # fixed
+    #   selected_params = jnp.array(init_params)
 
-      print("sample dims", sample.shape, len(bounds), args.random_sample_count)
-
-      #losses = jax.vmap(new_loss_func, in_axes=(0,None))(sample, *args_loss)
-      losses = jnp.array([new_loss_func(p, *args_loss) for p in sample], dtype=jnp.float32)
-      best_loss_idx = jnp.argmin(losses)
-      best_loss = losses[best_loss_idx]
-      best_params = sample[best_loss_idx]
-      print("best loss", best_loss)
-      print("best params", best_params)
-      selected_params = best_params
-      #sys.exit("sobol option not finished")
-      # TODO what other relevant statistics to include for this?
-      # mean, median, stdev, etc
-      # lots of parameter guesses are completely unphysical so this is an interesting question
-
-    elif args.init_FF_type == 'direct':
-      print("doing direct opt")
-      args_direct = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes, args.ff_type, args.opt_mode, ffq_ff)
-      #TODO this likely requires more tuning due to memory issues
-      #direct_options = dict(maxiter=10, maxls=20, maxcor=20, disp=False, jac=True) # maxiter 100
-      direct_min_options = dict(method='L-BFGS-B')
-      opt_bounds = optimize.Bounds(bounds[:,0], bounds[:,1])
-      print("bounds", bounds)
-      print("opt bounds", opt_bounds)
-      opt_results = optimize.direct(new_loss_func, bounds=opt_bounds, args=args_direct,
-                                  #options=direct_options,
-                                  #minimizer_kwargs=direct_min_options
-                                  )
-
-      selected_params = opt_results.x
-
-      jax.debug.print("opt results direct {}", opt_results)
-    # elif args.init_FF_type == 'dual_annealing':
-    # elif args.init_FF_type == 'differential_evolution':
-    elif args.init_FF_type == 'shgo':
-      args_shgo = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes, args.ff_type, args.opt_mode, ffq_ff)
-      shgo_options = dict(maxiter=10, maxls=20, maxcor=20, disp=False, jac=True) # maxiter 100
-      shgo_min_options = dict(method='L-BFGS-B')
-      opt_results = optimize.shgo(new_loss_and_grad_func, bounds=bounds, args=args_shgo,
-                                  options=shgo_options, minimizer_kwargs=shgo_min_options)
-
-      jax.debug.print("opt results shgo {}", opt_results)
-
-    # Code for GA routines ###########################################################################
-    # TODO move to separate file eventually
-    # elif args.init_FF_type == 'cmaes' or args.init_FF_type == 'pcmaes':      
-    #   from evosax.algorithms import Sep_CMA_ES
-    #   strategy = Sep_CMA_ES(population_size=256, solution)
-
-    if args.init_FF_type.startswith("genetic_"):
-      rng = jax.random.PRNGKey(0)
-      args_loss = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes, args.ff_type, args.opt_mode, ffq_ff)
-      initialization = jax.random.uniform(rng, (len(bounds),), minval=bounds[:,0], maxval=bounds[:,1])
-
-      strategy_name = args.init_FF_type[len("genetic_"):]
-      print("[INFO] Genetic algorithm is being used, strategy:", strategy_name)
-      strategy_fn = getattr(evosax.algorithms, strategy_name)
-      strategy = strategy_fn(population_size=256, solution=initialization)
-
-    if(args.init_FF_type in ['cmaes','snes','openes','pgpe']):
-      #rng = jax.random.PRNGKey(int(time.time()))
-      rng = jax.random.PRNGKey(0)
-      args_loss = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes, args.ff_type, args.opt_mode, ffq_ff)
-      # es_params = strategy.default_params
-      # state = strategy.initialize(rng, es_params)
-      #TODO: consider replacing this with a random distribution
-      initialization = jax.random.uniform(rng, (len(bounds),), minval=bounds[:,0], maxval=bounds[:,1])
-
-      if args.init_FF_type == 'cmaes':
-        from evosax.algorithms import Sep_CMA_ES
-        strategy = Sep_CMA_ES(population_size=256, solution=initialization)
-      elif args.init_FF_type == 'snes':      
-        from evosax.algorithms import SNES
-        strategy = SNES(population_size=256, solution=initialization)
-      elif args.init_FF_type == 'openes':      
-        from evosax.algorithms import Open_ES
-        strategy = Open_ES(population_size=256, solution=initialization)
-      elif args.init_FF_type == 'pgpe':      
-        from evosax.algorithms import PGPE
-        strategy = PGPE(population_size=256, solution=initialization)
-      elif args.init_FF_type == 'lga':      
-        from evosax.algorithms import LGA
-        strategy = LGA(population_size=256, solution=initialization)
-      elif args.init_FF_type == 'diffev':      
-        from evosax.algorithms import DiffusionEvolution
-        strategy = DiffusionEvolution(population_size=256, solution=initialization)
-
-      es_params = strategy.default_params
-      state = strategy.init(rng, initialization, es_params)
-
-      #state = state.replace(best_member=jnp.array(initialization))
-      #state = state.replace(mean=jnp.array(initialization))
-      print("[INFO] Init Params", initialization)
-      print("[INFO] Starting loss", new_loss_func(jnp.array(initialization), *args_loss))
-      #l_f = jax.vmap(new_loss_func, in_axes=(0,None,None,None,None,None,None,None,None,None,None))
-      #                               out_axes=(0,None,None,None,None,None,None,None,None,None,None))
-
-      # Run ask-eval-tell loop - NOTE: By default minimization!
-      gen_start = time.time()
-      fit_list = []
-      for t in range(args.random_sample_count):
-        #TODO: include vmap
-        rng, rng_gen, rng_eval = jax.random.split(rng, 3)
-        x, state = strategy.ask(rng_gen, state, es_params)
-        x = jnp.clip(x, bounds[:,0], bounds[:,1])
-        fitness = jnp.array([new_loss_func(p, *args_loss) for p in x], dtype=jnp.float32)
-        state, metrics = strategy.tell(rng_eval, x, fitness, state, es_params)
-        if (t + 1) % 10 == 0:
-          print("# Gen: {}|Fitness: {:.5f}".format(t+1, state.best_fitness))
-
-      print("[INFO] Best Solution:", state.best_solution)
-      print("[INFO] Best Fitness:", state.best_fitness)
-      selected_params = state.best_solution
-      gen_end = time.time()
-      print("Genetic Optimization Time:", gen_end-gen_start)
-
-    if args.init_FF_type == 'pcmaes':
-      sys.exit("[ERROR] Parallel GAs not fully implemented")
-      #TODO example implementation for
-      #parallel solver using shard map
-      from jax.sharding import Mesh
-      from jax.sharding import PartitionSpec
-      from jax.sharding import NamedSharding
-      from jax.experimental import mesh_utils
-      from jax.experimental.shard_map import shard_map
-
-      print("JAX Devices", jax.devices())
-      P = jax.sharding.PartitionSpec
-      devices = mesh_utils.create_device_mesh((4,))
-      mesh = jax.sharding.Mesh(devices, ('x'))
-      sharding = jax.sharding.NamedSharding(mesh, P('x'))
-
-      rng = jax.random.PRNGKey(0)
-      rng = jax.random.split(rng, 4)
-      args_loss = (param_indices, force_field, training_data,
-          list_positions, aligned_data, center_sizes, False,
-          aligned_amber_ff, ff_type_int, charge_type_int)
-      es_params = strategy.default_params
-      es_params = es_params.replace(mu_eff=jnp.repeat(es_params.mu_eff, 4))
-      es_params = es_params.replace(c_1=jnp.repeat(es_params.c_1, 4))
-      es_params = es_params.replace(c_mu=jnp.repeat(es_params.c_mu, 4))
-      es_params = es_params.replace(c_sigma=jnp.repeat(es_params.c_sigma, 4))
-      es_params = es_params.replace(d_sigma=jnp.repeat(es_params.d_sigma, 4))
-      es_params = es_params.replace(c_c=jnp.repeat(es_params.c_c, 4))
-      es_params = es_params.replace(chi_n=jnp.repeat(es_params.chi_n, 4))
-      es_params = es_params.replace(c_m=jnp.repeat(es_params.c_m, 4))
-      es_params = es_params.replace(sigma_init=jnp.repeat(es_params.sigma_init, 4))
-
-      es_params = es_params.replace(init_min=jnp.broadcast_to(bounds[:,0],(4,)+bounds[:,0].shape))
-      es_params = es_params.replace(init_max=jnp.broadcast_to(bounds[:,1],(4,)+bounds[:,1].shape))
-      es_params = es_params.replace(clip_min=jnp.broadcast_to(bounds[:,0],(4,)+bounds[:,0].shape))
-      es_params = es_params.replace(clip_max=jnp.broadcast_to(bounds[:,1],(4,)+bounds[:,1].shape))
-
-      #TODO probably a better way to do this by iterating over the fields and doing replace(**kwargs)
-      #for field in es_params.fields
-
-      #init_fn = shard_map(strategy.initialize, mesh=mesh, in_specs=(P(None), P("x")), out_specs=P("x"))
-      init_fn = jax.jit(jax.vmap(strategy.initialize))
-      print("clip shape", es_params.clip_max.shape)
-      print("mu shape", es_params.c_mu.shape)
-      es_params_sharded = jax.device_put(es_params, sharding)
-      rng_sharded = jax.device_put(rng, sharding)
-
-      #jax.debug.visualize_array_sharding(es_params_sharded)
-      #print("es sharded devices", es_params_sharded.init_min.devices())
-
-      state = init_fn(rng_sharded, es_params_sharded)
-      #state = init_fn(rng, es_params)
-
-      print("PCMAES Best Member", state.best_member.shape)
-
-      gen_start = time.time()
-
-      #TODO: better to do jit of shard map than shard map of jit if i go that direction
-      @jax.jit
-      @jax.vmap
-      def opt_loop(rng, es_params, state):
-        jax.debug.print("Optimization loop starting")
-        for t in range(args.generations):
-          #TODO: include vmap
-          rng, rng_gen, rng_eval = jax.random.split(rng, 3)
-          x, state = strategy.ask(rng_gen, state, es_params)
-          fitness = jnp.array([new_loss_func(p, *args_loss) for p in x], dtype=jnp.float32)
-          state = strategy.tell(x, fitness, state, es_params)
-          if (t + 1) % 1 == 0:
-            jax.debug.print("# Gen: {gen}", gen=t+1)
-            sys.stdout.flush()
-
-        return state
-
-      state = opt_loop(rng_sharded, es_params_sharded, state)
-
-      print("Best Member:", state.best_member)
-      print("Best Fitness:", state.best_fitness)
-      selected_params = state.best_member
-      gen_end = time.time()
-      print("Genetic Optimization Time:", gen_end-gen_start)
-
-      # TODO try to gather at end with lax.all_gather?
-      sys.exit()
 
     ##################################################################################################
   
@@ -904,7 +739,7 @@ def main():
                            validation_data,
                            num_steps, e_minim_flag, opt_method, optim_options,
                            advanced_opts,
-                           new_loss_and_grad_func, minim_func, allocate_func, args.ff_type, args.opt_mode, ffq_ff)
+                           new_loss_and_grad_func, minim_func, allocate_func, args.ff_type, args.opt_mode, ffq_ff, args.loss_metric)
     end = time.time()
   
     result = {"time":end-start, "value": global_min, 
@@ -963,7 +798,7 @@ def main():
     loss, indiv_errors = new_loss_func(params, param_indices,
                                       force_field, training_data,
                                       list_positions, aligned_data,
-                                      center_sizes, args.ff_type, args.opt_mode, ffq_ff,
+                                      center_sizes, args.ff_type, args.opt_mode, ffq_ff, args.loss_metric,
                                       True)
     for k in indiv_errors.keys():
       # move data to regular numpy arrays
