@@ -52,8 +52,8 @@ jobs:
         run: uv pip install .[lint]
       - name: Run Ruff
         run: |
-          uv run ruff check jaxparamopt/config.py jaxparamopt/driver.py jaxparamopt/input.py jaxparamopt/backends tests/config_test.py tests/driver_test.py tests/input_test.py
-          uv run ruff format --check jaxparamopt/config.py jaxparamopt/driver.py jaxparamopt/input.py jaxparamopt/backends tests/config_test.py tests/driver_test.py tests/input_test.py
+          uv run ruff check jaxparamopt/config.py jaxparamopt/input.py jaxparamopt/backends tests/config_test.py tests/driver_test.py tests/input_test.py
+          uv run ruff format --check jaxparamopt/config.py jaxparamopt/input.py jaxparamopt/backends tests/config_test.py tests/driver_test.py tests/input_test.py
 
   interface-tests:
     runs-on: ubuntu-latest

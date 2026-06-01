@@ -6,9 +6,9 @@ from .amber import AmberEEMInputLoader, AmberInputLoader
 from .reaxff import ReaxFFInputLoader
 
 _INPUT_LOADERS = {
-    "amber": AmberInputLoader(),
-    "ambereem": AmberEEMInputLoader(),
-    "reaxff": ReaxFFInputLoader(),
+  "amber": AmberInputLoader(),
+  "ambereem": AmberEEMInputLoader(),
+  "reaxff": ReaxFFInputLoader(),
 }
 
 
@@ -17,6 +17,4 @@ def get_backend_input_loader(name: str):
     return _INPUT_LOADERS[name]
   except KeyError as exc:
     known = ", ".join(sorted(_INPUT_LOADERS))
-    raise ValueError(
-        f"Unknown backend '{name}'. Known backends: {known}."
-    ) from exc
+    raise ValueError(f"Unknown backend '{name}'. Known backends: {known}.") from exc

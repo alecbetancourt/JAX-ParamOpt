@@ -21,22 +21,23 @@ class ReaxFFInputLoader:
     from jax_md.mm_forcefields.reaxff.reaxff_helper import read_force_field
 
     from jaxparamopt.input import (
-        create_structure_map,
-        filter_data,
-        map_params,
-        read_geo_file,
-        read_parameter_file,
-        read_train_set,
-        structure_training_data,
+      InputBundle,
+      ParameterInput,
+      create_structure_map,
+      filter_data,
+      map_params,
+      read_geo_file,
+      read_parameter_file,
+      read_train_set,
+      structure_training_data,
     )
-    from jaxparamopt.input import InputBundle, ParameterInput
 
     type_dtype = jnp.float64
 
     force_field = read_force_field(
-        config.init_FF,
-        cutoff2=config.cutoff2,
-        dtype=type_dtype,
+      config.init_FF,
+      cutoff2=config.cutoff2,
+      dtype=type_dtype,
     )
     force_field = ForceField.fill_off_diag(force_field)
     force_field = ForceField.fill_symm(force_field)
@@ -58,35 +59,33 @@ class ReaxFFInputLoader:
     systems, training_data = filter_data(systems, training_data)
 
     if config.use_valid:
-      raise NotImplementedError(
-          "Validation data is not yet supported for ReaxFF input loading."
-      )
+      raise NotImplementedError("Validation data is not yet supported for ReaxFF input loading.")
 
     geo_name_to_index, geo_index_to_name = create_structure_map(systems)
     training_data = structure_training_data(training_data, geo_name_to_index)
 
     for index, system in enumerate(systems):
       systems[index] = dataclasses.replace(
-          system,
-          name=geo_name_to_index[system.name],
+        system,
+        name=geo_name_to_index[system.name],
       )
 
     return InputBundle(
-        config=config,
-        backend_name=self.name,
-        raw_model=force_field,
-        raw_systems=systems,
-        training_data=training_data,
-        validation_data=validation_data,
-        parameter_input=ParameterInput(
-            raw_parameters=params_list,
-            parameter_ids=param_indices,
-            bounds=bounds,
-            metadata={"raw_parameters_original": params_list_orig},
-        ),
-        metadata={
-            "ffq_ff": None,
-            "geo_name_to_index": geo_name_to_index,
-            "geo_index_to_name": geo_index_to_name,
-        },
+      config=config,
+      backend_name=self.name,
+      raw_model=force_field,
+      raw_systems=systems,
+      training_data=training_data,
+      validation_data=validation_data,
+      parameter_input=ParameterInput(
+        raw_parameters=params_list,
+        parameter_ids=param_indices,
+        bounds=bounds,
+        metadata={"raw_parameters_original": params_list_orig},
+      ),
+      metadata={
+        "ffq_ff": None,
+        "geo_name_to_index": geo_name_to_index,
+        "geo_index_to_name": geo_index_to_name,
+      },
     )

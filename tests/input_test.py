@@ -10,17 +10,17 @@ def test_load_inputs_dispatches_to_backend_loader(monkeypatch):
   class FakeLoader:
     def load_inputs(self, normalized_config):
       return InputBundle(
-          config=normalized_config,
-          backend_name=normalized_config.ff_type,
-          parameter_input=ParameterInput(
-              parameter_ids=("p1",),
-              bounds=((0.0, 1.0),),
-          ),
+        config=normalized_config,
+        backend_name=normalized_config.ff_type,
+        parameter_input=ParameterInput(
+          parameter_ids=("p1",),
+          bounds=((0.0, 1.0),),
+        ),
       )
 
   monkeypatch.setattr(
-      "jaxparamopt.input.get_backend_input_loader",
-      lambda name: FakeLoader(),
+    "jaxparamopt.input.get_backend_input_loader",
+    lambda name: FakeLoader(),
   )
 
   bundle = load_inputs(config)
@@ -34,13 +34,13 @@ def test_load_inputs_accepts_mapping(monkeypatch):
   class FakeLoader:
     def load_inputs(self, normalized_config):
       return InputBundle(
-          config=normalized_config,
-          backend_name=normalized_config.ff_type,
+        config=normalized_config,
+        backend_name=normalized_config.ff_type,
       )
 
   monkeypatch.setattr(
-      "jaxparamopt.input.get_backend_input_loader",
-      lambda name: FakeLoader(),
+    "jaxparamopt.input.get_backend_input_loader",
+    lambda name: FakeLoader(),
   )
 
   bundle = load_inputs({"ff_type": "amber", "seed": 11})

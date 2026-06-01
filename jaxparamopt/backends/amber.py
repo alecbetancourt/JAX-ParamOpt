@@ -14,6 +14,4 @@ class AmberInputLoader:
   name = "amber"
 
   def load_inputs(self, config: OptimizationConfig) -> "InputBundle":
-    raise NotImplementedError(
-        "AMBER input loading has not been extracted from driver.py yet."
-    )
+    raise NotImplementedError("AMBER input loading has not been extracted from driver.py yet.")

@@ -109,6 +109,7 @@ target-version = "py310"
 extend-exclude = [
   "Datasets",
 ]
+indent-width = 2
 
 [tool.ruff.lint]
 select = [

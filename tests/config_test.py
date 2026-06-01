@@ -3,13 +3,13 @@ from jaxparamopt.config import OptimizationConfig, parse_cli_args
 
 def test_parse_cli_args_builds_typed_config():
   config = parse_cli_args(
-      [
-          "--init_FF",
-          "ffield_custom",
-          "--use_valid",
-          "--num_trials",
-          "3",
-      ]
+    [
+      "--init_FF",
+      "ffield_custom",
+      "--use_valid",
+      "--num_trials",
+      "3",
+    ]
   )
 
   assert isinstance(config, OptimizationConfig)
@@ -20,10 +20,10 @@ def test_parse_cli_args_builds_typed_config():
 
 def test_config_from_mapping_overrides_defaults():
   config = OptimizationConfig.from_mapping(
-      {
-          "seed": 7,
-          "ff_type": "amber",
-      }
+    {
+      "seed": 7,
+      "ff_type": "amber",
+    }
   )
 
   assert isinstance(config, OptimizationConfig)
