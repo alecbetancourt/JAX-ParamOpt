@@ -1,6 +1,6 @@
 # JAX-ParamOpt
 
-JAX-ParamOpt is a framework for optimizing molecular force-field parameters with differentiable energy evaluation and JAX-native execution. It began as an extension of the original JAX-ReaxFF optimizer and is being refactored into a broader forcefield-agnostic optimization platform.
+JAX-ParamOpt is a framework for optimizing molecular force-field parameters with differentiable energy evaluation and JAX-native execution. It began as an extension of the original JAX-ReaxFF optimizer developed by Memhet Cagri Kaymak and is being refactored into a broader forcefield-agnostic optimization platform.
 
 ## Documentation Structure
 
