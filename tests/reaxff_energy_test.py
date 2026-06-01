@@ -1,24 +1,27 @@
 import os
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
+# import pytest
+
+# pytest.importorskip("jax")
+# pytest.importorskip("jax_md")
+
 import jax
 jax.config.update("jax_enable_x64", True)
 import numpy as onp
 import jax.numpy as jnp
 from absl.testing import parameterized
 from jax_md import dataclasses
-from jax_md.reaxff.reaxff_forcefield import ForceField
-from jax_md.reaxff.reaxff_helper import read_force_field
-from jaxparamopt.helper import (move_dataclass,
-                              process_and_cluster_geos,
-                              create_structure_map,
-                              read_geo_file,
-                              count_inter_list_sizes)
+from jax_md.mm_forcefields.reaxff.reaxff_forcefield import ForceField
+from jax_md.mm_forcefields.reaxff.reaxff_helper import read_force_field
+from jaxparamopt.helper import move_dataclass, process_and_cluster_geos, count_inter_list_sizes
+from jaxparamopt.input import (create_structure_map,
+                              read_geo_file)
 from jaxparamopt.structure import align_structures
 from jaxparamopt.interactions import reaxff_interaction_list_generator
 import pickle
 from frozendict import frozendict
 
-from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
+from jax_md.mm_forcefields.reaxff.reaxff_energy import calculate_reaxff_energy
 from jaxparamopt.interactions import calculate_dist_and_angles
 
 ATOL = 1e-3
@@ -80,7 +83,7 @@ def read_and_process_FF_file(filename, cutoff2 = 0.001, dtype=jnp.float64):
   return force_field
 
 def read_and_process_geo_file(filename, force_field):
-  systems = read_geo_file(filename, force_field.name_to_index, 10.0)
+  systems = read_geo_file(filename, force_field.name_to_index, "reaxff", 10.0)
   geo_name_to_index, geo_index_to_name = create_structure_map(systems)
   # replace names with indices
   for i,s in enumerate(systems):
@@ -178,4 +181,3 @@ class ReaxFFEnergyTest(parameterized.TestCase):
     for i in range(len(center_sizes)):
       for k, v in all_inters[i][1].items():
         self.assertEqual(int(v), int(center_sizes[i][k]), msg=f"count-allocate compare: {k}")
-

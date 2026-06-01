@@ -11,3 +11,4 @@ dist/
 .eggs/
 .venv/
 venv/
+DESIGN.md

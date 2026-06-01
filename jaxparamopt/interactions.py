@@ -11,18 +11,18 @@ Author: Mehmet Cagri Kaymak
 import jax
 import jax.numpy as jnp
 import numpy as onp
-from jax_md.reaxff.reaxff_energy import calculate_bo
-from jax_md.reaxff.reaxff_interactions import (filtration,
-                                              body_3_candidate_fn, 
-                                              body_4_candidate_fn,
-                                              hbond_candidate_fn,
-                                              ReaxFFNeighborLists,
-                                              calculate_angle, 
-                                              calculate_all_4_body_angles,
-                                              calculate_all_hbond_angles_and_dists)
-from jax_md.reaxff.reaxff_helper import safe_sqrt
-from jax_md.reaxff.reaxff_energy import calculate_reaxff_energy
-from jax_md.reaxff.reaxff_forcefield import ForceField
+from jax_md.mm_forcefields.reaxff.reaxff_energy import calculate_bo
+from jax_md.mm_forcefields.reaxff.reaxff_interactions import (filtration,
+                                                              body_3_candidate_fn, 
+                                                              body_4_candidate_fn,
+                                                              hbond_candidate_fn,
+                                                              ReaxFFNeighborLists,
+                                                              calculate_angle, 
+                                                              calculate_all_4_body_angles,
+                                                              calculate_all_hbond_angles_and_dists)
+from jax_md.mm_forcefields.reaxff.reaxff_helper import safe_sqrt
+from jax_md.mm_forcefields.reaxff.reaxff_energy import calculate_reaxff_energy
+from jax_md.mm_forcefields.reaxff.reaxff_forcefield import ForceField
 from jax_md.space import map_neighbor
 from jax_md.util import safe_mask
 from jax_md import dataclasses, util

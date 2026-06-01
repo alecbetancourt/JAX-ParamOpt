@@ -52,8 +52,8 @@ jobs:
         run: uv pip install .[lint]
       - name: Run Ruff
         run: |
-          uv run ruff check jaxparamopt/config.py jaxparamopt/driver.py tests/config_test.py tests/driver_test.py
-          uv run ruff format --check jaxparamopt/config.py jaxparamopt/driver.py tests/config_test.py tests/driver_test.py
+          uv run ruff check jaxparamopt/config.py jaxparamopt/driver.py jaxparamopt/input.py jaxparamopt/backends tests/config_test.py tests/driver_test.py tests/input_test.py
+          uv run ruff format --check jaxparamopt/config.py jaxparamopt/driver.py jaxparamopt/input.py jaxparamopt/backends tests/config_test.py tests/driver_test.py tests/input_test.py
 
   interface-tests:
     runs-on: ubuntu-latest
@@ -72,4 +72,23 @@ jobs:
       - name: Install test dependencies
         run: uv pip install .[test]
       - name: Run interface tests
-        run: uv run python -m pytest tests/config_test.py tests/driver_test.py --cov=jaxparamopt --cov-report=xml --cov-report=term
+        run: uv run python -m pytest tests/config_test.py tests/driver_test.py tests/input_test.py --cov=jaxparamopt --cov-report=xml --cov-report=term
+
+  reaxff-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+      - name: Create virtual environment
+        run: uv venv --python ${{ matrix.python-version }}
+      - name: Install JAX and test dependencies
+        run: uv pip install .[jax,test]
+      - name: Run ReaxFF regression test
+        run: uv run python -m pytest tests/reaxff_energy_test.py
