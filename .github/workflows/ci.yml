@@ -31,6 +31,7 @@ jobs:
         run: uv venv --python ${{ matrix.python-version }}
       - name: Install package and test dependencies
         run: |
+          uv pip install .[jax]
           uv pip install .[test]
           uv pip install build
       - name: Build distributions
@@ -70,7 +71,9 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: uv pip install .[test]
+        run: |
+          uv pip install .[jax]
+          uv pip install .[test]
       - name: Run interface tests
         run: uv run python -m pytest tests/config_test.py tests/driver_test.py tests/input_test.py --cov=jaxparamopt --cov-report=xml --cov-report=term
 

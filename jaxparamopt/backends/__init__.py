@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from .amber import AmberEEMInputLoader, AmberInputLoader
+from .amber import AmberInputLoader
 from .reaxff import ReaxFFInputLoader
 
 _INPUT_LOADERS = {
   "amber": AmberInputLoader(),
-  "ambereem": AmberEEMInputLoader(),
   "reaxff": ReaxFFInputLoader(),
 }
 
