@@ -136,125 +136,189 @@ def calculate_box_shifts(is_periodic, far_nbr_cutoff, orth_mat):
 
 def read_geo_file(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
   """
-  Read the geometries from the provided geometry file
+  Read geometries from a supported input file.
+
+  Intended parser contract:
+  - each parser should ideally return a `list[Structure]`
+  - each returned structure should include, when the source format supports it:
+    - `name`
+    - `atom_count`
+    - `atom_types`
+    - `atomic_nums` when available or inferable
+    - `positions`
+    - `orth_matrix`
+    - `total_charge`
+    - minimization / run metadata
+    - `periodic_image_shifts`
+    - restraint data
+    - placeholder or embedded target arrays
+  - formats that cannot provide all of these fields may use reasonable defaults
+    during parsing, and those gaps can be normalized later in the input pipeline
+
+  Current support:
+  - `.bgf` and extensionless ReaxFF-style geometry files
+  - `.h5` / `.hdf5`
+
+  Planned / stubbed formats:
+  - `.xyz`
+  - `.pdb`
+  - `.mol2`
+  - `.sdf`
   """
   if not os.path.exists(geo_file):
     print("Path {} does not exist!".format(geo_file))
     return []
 
-  if os.path.splitext(geo_file)[-1] in [".h5", ".hdf5"]:
-    print("[INFO] Input geometry format is detected as .h5")
-    list_systems = []
-    with h5py.File(geo_file, "r") as hf:
-      # TODO is this necessary, or is there a more automated way of making
-      # h5py and jax more interoperable?
-      # TODO clean this up and merge the two code paths after these details are worked out
-      # TODO consider if doing this two step group approach is really the best way
-      # it could also help to have some main /structures/cluster... group
-      # and then figure out how to grab all the leaves of /structures
-      # more flexible going forward too as you don't iterate over every group explicitly
-      for key in hf:
-        if key == "training":
-          continue
-        group = hf[key]
-        num_structures = group.attrs["structure_count"]
-        system_name = key
-        num_atoms = group.attrs["nat"]
-        atom_names = onp.char.decode(group["species"][()], encoding="utf-8")
-        reax_atom_types = onp.array([name_to_index_map[name] for name in atom_names])
-        atomic_nums = onp.zeros(num_atoms, dtype=onp.int32)
-        atomic_nums = onp.where(atom_names == "C", 6, atomic_nums)
-        atomic_nums = onp.where(atom_names == "O", 8, atomic_nums)
-        atomic_nums = onp.where(atom_names == "H", 1, atomic_nums)
-        atoms_positions = group["coordinates"][()]
-        box = [999.0, 999.0, 999.0]
-        box_angles = [90.0, 90.0, 90.0]
-        is_periodic = False
-        do_minimization = True
-        max_it = 99999
-        # box information
-        orth_mat = orthogonalization_matrix(box, box_angles)
-        all_shifts = calculate_box_shifts(is_periodic, far_nbr_cutoff, orth_mat)
-        # TODO add restraints
-        bond_restraints = [[-1, -1, 0, 0, 0]]
-        angle_restraints = [[-1, -1, -1, 0, 0, 0]]
-        torsion_restraints = [[-1, -1, -1, -1, 0, 0, 0]]
-        bond_restraints = onp.array(bond_restraints)
-        angle_restraints = onp.array(angle_restraints)
-        torsion_restraints = onp.array(torsion_restraints)
-        total_charge = onp.zeros((num_structures,))  # TODO add non 0 charge
-        new_bond_restraints = BondRestraint(
-          ind1=bond_restraints[:, 0].astype(onp.int32),
-          ind2=bond_restraints[:, 1].astype(onp.int32),
-          force1=bond_restraints[:, 2].astype(onp.float32),
-          force2=bond_restraints[:, 3].astype(onp.float32),
-          target=bond_restraints[:, 4].astype(onp.float32),
-        )
+  extension = os.path.splitext(geo_file)[-1].lower()
+  print(f"[INFO] Input geometry format is detected as {extension}")
 
-        new_angle_restraints = AngleRestraint(
-          ind1=angle_restraints[:, 0].astype(onp.int32),
-          ind2=angle_restraints[:, 1].astype(onp.int32),
-          ind3=angle_restraints[:, 2].astype(onp.int32),
-          force1=angle_restraints[:, 3].astype(onp.float32),
-          force2=angle_restraints[:, 4].astype(onp.float32),
-          target=angle_restraints[:, 5].astype(onp.float32),
-        )
+  # TODO reorder to be consistent with function ordering
+  if extension in [".h5", ".hdf5"]:
+    return _read_hdf5_geometries(geo_file, name_to_index_map, far_nbr_cutoff)
+  if extension == ".bgf":
+    return _read_bgf_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff)
+  if extension == ".xyz":
+    return _read_xyz_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff)
+  if extension == ".pdb":
+    return _read_pdb_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff)
+  if extension == ".mol2":
+    return _read_mol2_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff)
+  if extension == ".sdf":
+    return _read_sdf_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff)
+  if extension not in ["", ".bgf"]:
+    raise NotImplementedError(
+      f"Unsupported geometry format '{extension}' for file '{geo_file}'."
+    )
 
-        new_torsion_restraints = TorsionRestraint(
-          ind1=torsion_restraints[:, 0].astype(onp.int32),
-          ind2=torsion_restraints[:, 1].astype(onp.int32),
-          ind3=torsion_restraints[:, 2].astype(onp.int32),
-          ind4=torsion_restraints[:, 3].astype(onp.int32),
-          force1=torsion_restraints[:, 4].astype(onp.float32),
-          force2=torsion_restraints[:, 5].astype(onp.float32),
-          target=torsion_restraints[:, 6].astype(onp.float32),
-        )
-        # TODO this should be changed
-        # training items should be separate from the structures in principle
-        # the question is how to best organize and iterate over them
-        # it looks like these values may also be dummy values anyways?
-        # where are they used?
-        # TODO maybe remove from structures.py?
-        target_e = 0.0
-        # if "/training/energy_items" in hf:
-        #   target_e = group["energies"][()]
+def _read_hdf5_geometries(geo_file, name_to_index_map, far_nbr_cutoff=10.0):
+  list_systems = []
+  with h5py.File(geo_file, "r") as hf:
+    # TODO is this necessary, or is there a more automated way of making
+    # h5py and jax more interoperable?
+    # TODO clean this up and merge the two code paths after these details are worked out
+    # TODO consider if doing this two step group approach is really the best way
+    # it could also help to have some main /structures/cluster... group
+    # and then figure out how to grab all the leaves of /structures
+    # more flexible going forward too as you don't iterate over every group explicitly
+    for key in hf:
+      if key == "training":
+        continue
+      group = hf[key]
+      num_structures = group.attrs["structure_count"]
+      system_name = key
+      num_atoms = group.attrs["nat"]
+      atom_names = onp.char.decode(group["species"][()], encoding="utf-8")
+      reax_atom_types = onp.array([name_to_index_map[name] for name in atom_names])
+      atomic_nums = onp.zeros(num_atoms, dtype=onp.int32)
+      atomic_nums = onp.where(atom_names == "C", 6, atomic_nums)
+      atomic_nums = onp.where(atom_names == "O", 8, atomic_nums)
+      atomic_nums = onp.where(atom_names == "H", 1, atomic_nums)
+      atoms_positions = group["coordinates"][()]
+      box = [999.0, 999.0, 999.0]
+      box_angles = [90.0, 90.0, 90.0]
+      is_periodic = False
+      do_minimization = True
+      max_it = 99999
+      # box information
+      orth_mat = orthogonalization_matrix(box, box_angles)
+      all_shifts = calculate_box_shifts(is_periodic, far_nbr_cutoff, orth_mat)
+      # TODO add restraints
+      bond_restraints = [[-1, -1, 0, 0, 0]]
+      angle_restraints = [[-1, -1, -1, 0, 0, 0]]
+      torsion_restraints = [[-1, -1, -1, -1, 0, 0, 0]]
+      bond_restraints = onp.array(bond_restraints)
+      angle_restraints = onp.array(angle_restraints)
+      torsion_restraints = onp.array(torsion_restraints)
+      total_charge = onp.zeros((num_structures,))  # TODO add non 0 charge
+      new_bond_restraints = BondRestraint(
+        ind1=bond_restraints[:, 0].astype(onp.int32),
+        ind2=bond_restraints[:, 1].astype(onp.int32),
+        force1=bond_restraints[:, 2].astype(onp.float32),
+        force2=bond_restraints[:, 3].astype(onp.float32),
+        target=bond_restraints[:, 4].astype(onp.float32),
+      )
 
-        target_f = onp.zeros((num_atoms, 3), dtype=onp.float32)  # TODO add force, charge, hess
-        # if "/training/force_items" in hf:
-        #   target_f = group["forces"][()]
+      new_angle_restraints = AngleRestraint(
+        ind1=angle_restraints[:, 0].astype(onp.int32),
+        ind2=angle_restraints[:, 1].astype(onp.int32),
+        ind3=angle_restraints[:, 2].astype(onp.int32),
+        force1=angle_restraints[:, 3].astype(onp.float32),
+        force2=angle_restraints[:, 4].astype(onp.float32),
+        target=angle_restraints[:, 5].astype(onp.float32),
+      )
 
-        target_ch = onp.zeros((num_atoms), dtype=onp.float32)
-        # if "/training/charge_items" in hf:
-        #   target_ch = group["charges"][()]
+      new_torsion_restraints = TorsionRestraint(
+        ind1=torsion_restraints[:, 0].astype(onp.int32),
+        ind2=torsion_restraints[:, 1].astype(onp.int32),
+        ind3=torsion_restraints[:, 2].astype(onp.int32),
+        ind4=torsion_restraints[:, 3].astype(onp.int32),
+        force1=torsion_restraints[:, 4].astype(onp.float32),
+        force2=torsion_restraints[:, 5].astype(onp.float32),
+        target=torsion_restraints[:, 6].astype(onp.float32),
+      )
+      # TODO this should be changed
+      # training items should be separate from the structures in principle
+      # the question is how to best organize and iterate over them
+      # it looks like these values may also be dummy values anyways?
+      # where are they used?
+      # TODO maybe remove from structures.py?
+      target_e = 0.0
+      # if "/training/energy_items" in hf:
+      #   target_e = group["energies"][()]
 
-        # TODO this might not scale well for empty storage
-        # maybe use none as a default value for these
-        # target_hess = onp.zeros((num_structures, num_atoms, num_atoms), dtype=onp.float32)
+      target_f = onp.zeros((num_atoms, 3), dtype=onp.float32)  # TODO add force, charge, hess
+      # if "/training/force_items" in hf:
+      #   target_f = group["forces"][()]
 
-        for i in range(num_structures):
-          new_system = Structure(
-            system_name + f"_{i}",
-            num_atoms,
-            reax_atom_types,
-            atomic_nums,
-            atoms_positions[i],
-            orth_mat,
-            total_charge[i],
-            do_minimization,
-            max_it,
-            all_shifts,
-            new_bond_restraints,
-            new_angle_restraints,
-            new_torsion_restraints,
-            target_e,
-            target_f,
-            target_ch,
-          )  # target values are not used here
+      target_ch = onp.zeros((num_atoms), dtype=onp.float32)
+      # if "/training/charge_items" in hf:
+      #   target_ch = group["charges"][()]
 
-          list_systems.append(new_system)
+      # TODO this might not scale well for empty storage
+      # maybe use none as a default value for these
+      # target_hess = onp.zeros((num_structures, num_atoms, num_atoms), dtype=onp.float32)
 
-    return list_systems
+      for i in range(num_structures):
+        new_system = Structure(
+          system_name + f"_{i}",
+          num_atoms,
+          reax_atom_types,
+          atomic_nums,
+          atoms_positions[i],
+          orth_mat,
+          total_charge[i],
+          do_minimization,
+          max_it,
+          all_shifts,
+          new_bond_restraints,
+          new_angle_restraints,
+          new_torsion_restraints,
+          target_e,
+          target_f,
+          target_ch,
+        )  # target values are not used here
 
+        list_systems.append(new_system)
+
+  return list_systems
+
+
+def _read_xyz_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
+  raise NotImplementedError("XYZ geometry parsing is not implemented yet.")
+
+
+def _read_pdb_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
+  raise NotImplementedError("PDB geometry parsing is not implemented yet.")
+
+
+def _read_mol2_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
+  raise NotImplementedError("MOL2 geometry parsing is not implemented yet.")
+
+
+def _read_sdf_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff=10.0):
+  raise NotImplementedError("SDF geometry parsing is not implemented yet.")
+
+def _read_bgf_geometries(geo_file, name_to_index_map, ff_type, far_nbr_cutoff):
   list_systems = []
   f = open(geo_file, "r")
   system_name = ""

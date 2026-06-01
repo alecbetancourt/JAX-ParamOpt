@@ -1,0 +1,57 @@
+site_name: JAX-ParamOpt
+site_description: Differentiable force field parameter optimization in JAX.
+site_url: https://alecbetancourt.github.io/JAX-ParamOpt/
+repo_url: https://github.com/alecbetancourt/JAX-ParamOpt
+repo_name: alecbetancourt/JAX-ParamOpt
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Quickstart: quickstart.md
+  - CLI: cli.md
+  - Python API: python-api.md
+  - Backends:
+      - Overview: backends/index.md
+      - ReaxFF: backends/reaxff.md
+      - AMBER: backends/amber.md
+  - Inputs:
+      - Overview: inputs/index.md
+      - Geometry Formats: inputs/geometry-formats.md
+      - Training Data: inputs/training-data.md
+      - Parameter Files: inputs/parameter-files.md
+  - Workflows:
+      - Overview: workflows/index.md
+      - Optimization Workflows: workflows/optimization-workflows.md
+      - Staged Fitting: workflows/staged-fitting.md
+  - Theory:
+      - Overview: theory/index.md
+      - Objectives: theory/objectives.md
+      - Differentiation: theory/differentiation.md
+      - Simulation Targets: theory/simulation-targets.md
+  - Reference:
+      - Overview: reference/index.md
+  - Development:
+      - Overview: development/index.md
+      - Architecture: development/architecture.md
+      - Contributing: development/contributing.md
+      - Testing: development/testing.md

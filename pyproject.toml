@@ -59,6 +59,11 @@ global-opt = [
 dlfind = [
   "libdlfind",
 ]
+docs = [
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.24",
+]
 test = [
   "absl-py",
   "coverage[toml]",
@@ -73,6 +78,9 @@ lint = [
 dev = [
   "absl-py",
   "coverage[toml]",
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.24",
   "pre-commit",
   "pytest",
   "pytest-cov",

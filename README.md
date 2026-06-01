@@ -182,6 +182,7 @@ The repository currently uses:
 - `pre-commit` plus `ruff` for lightweight quality checks.
 - GitHub Actions `ci.yml` for build smoke tests, linting, and the first interface tests.
 - GitHub Actions `release.yml` for source/wheel builds and future release publishing.
+- MkDocs plus GitHub Pages for the main documentation site.
 
 Typical local commands:
 
@@ -189,6 +190,14 @@ Typical local commands:
 python -m pip install ".[lint,test]"
 pre-commit run --all-files
 python -m pytest tests/config_test.py tests/driver_test.py
+```
+
+Documentation commands:
+
+```bash
+python -m pip install ".[docs]"
+mkdocs serve
+mkdocs build
 ```
 
 ## Configuration Notes
