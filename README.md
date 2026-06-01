@@ -2,160 +2,229 @@
 
 # JAX-ParamOpt
 
-### Fast, flexible parameter optimization for molecular force fields - in pure Python, powered by JAX.
+[![CI](https://github.com/alecbetancourt/JAX-ParamOpt/actions/workflows/ci.yml/badge.svg)](https://github.com/alecbetancourt/JAX-ParamOpt/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 
-JAX-ParamOpt is a fast, flexible framework for optimizing parameters in molecular force fields. It combines differentiable energy evaluation with modern JAX tooling to deliver orders-of-magnitude speedups over traditional stochastic methods, while doubling as a sandbox for developing new functional forms and parameterization schemes in pure Python. This tool is a fork of the excellent JAX-ReaxFF optimizer by Mehmet Cagri Kaymak.
+<!-- Placeholder badges to enable after first release:
+[![PyPI version](https://img.shields.io/pypi/v/jaxparamopt.svg)](https://pypi.org/project/jaxparamopt/)
+[![Coverage](https://img.shields.io/codecov/c/github/alecbetancourt/JAX-ParamOpt)](https://codecov.io/gh/alecbetancourt/JAX-ParamOpt)
+[![DOI](https://zenodo.org/badge/DOI/<doi>.svg)](https://doi.org/<doi>)
+-->
+
+### Fast, flexible parameter optimization for molecular force fields in pure Python, powered by JAX.
+
+JAX-ParamOpt is a framework for optimizing molecular force-field parameters with differentiable energy evaluation and modern JAX tooling. It began as a fork of the JAX-ReaxFF optimizer by Mehmet Cagri Kaymak and is being generalized to support broader force-field parameter sets, multiple local and global optimization methods, and reusable library workflows in addition to a CLI.
 
 ## Why JAX-ParamOpt?
 
-- End-to-end differentiable: Uses JAX functional transformations to compute exact gradients of your loss w.r.t. any chosen parameters.
+- End-to-end differentiable optimization of selected force-field parameters.
+- Pure Python implementation with JAX transformations for CPU/GPU execution.
+- Support for both gradient-based local optimization and more traditional global search methods.
+- Generalization beyond ReaxFF toward broader force-field representations and interchange workflows.
 
-- Hardware acceleration: Scales from laptops to GPUs/TPUs with the same Python code.
+## Status
 
-- Minutes, not days: Gradient-based local optimizers converge dramatically faster than GA/MC for many fitting problems. In addition, a robust suite of GAs and other traditional optimization methods are supported to precondition
+- The CLI entrypoint is currently the primary supported interface.
+- The Python API is still provisional and may change as the backend and workflow internals are refactored.
+- The package metadata and CI/release scaffolding are in place, but the scientific workflow and test surface are still being stabilized for a first public release.
 
-- General, not siloed: Works with ReaxFF, non-reactive force fields (e.g. AMBER Protein, GAFF), and is extensible to new terms.
+## Installation
 
-## What’s new vs the original ReaxFF-only tool
+JAX-ParamOpt uses `pyproject.toml` for packaging and optional dependency groups. The base package is intentionally lighter than the full scientific runtime so backend-specific dependencies can be installed explicitly.
 
-- General parameter model: Optimize global, shared, and local parameters across one or many force-field objects.
+### Install From PyPI
 
-- Clustered batching: Structures and FFs are aligned into clusters to enable vmap-friendly evaluation (1-FF/Many-geom or N-FF/N-geom) with minimal memory overhead.
+Once a public release is available:
 
-- Fast set/get: Vectorized parameter scatter into FF arrays allows optimization fully in-memory, significantly reducing I/O pressure compared to other ad-hoc approaches.
-
-- AMBER-family support (GAFF/FF19SB), ANI-1X support, easy to extend to new functional forms.
-
-## Citations
-
-You can learn more about the method in the following papers
-(Plase cite them if you utlize this repository):
-
-JAX-ParamOpt Paper: *In Progress*
-
-Original JAX-ReaxFF Paper: [Jax-ReaxFF](https://pubs.acs.org/doi/10.1021/acs.jctc.2c00363)
-
-JAX-MD Integration Paper: [End-to-End Differentiable ReaxFF](https://link.springer.com/chapter/10.1007/978-3-031-32041-5_11)
-
-In addition, cite these papers for some of the external dependencies that have been included in the core optimizer:
-*In Progress*
-DLFind
-Sella
-ANI
-AMBER
-Evosax
-etc.
-
-## How to Install
-JAX-ParamOpt now uses `pyproject.toml` for package metadata and dependency groups.
-The core package metadata is intentionally lighter than the full scientific stack so
-that backend-specific dependencies can be installed explicitly.
-
-**1-** Clone the repository:
+```bash
+pip install jaxparamopt
 ```
-git clone https://github.com/alecbetancourt/JAX-ParamOpt/
+
+Optional dependency groups can then be installed as needed:
+
+```bash
+pip install "jaxparamopt[jax]"
+pip install "jaxparamopt[test]"
+pip install "jaxparamopt[lint]"
+pip install "jaxparamopt[amber]"
+pip install "jaxparamopt[global-opt]"
+pip install "jaxparamopt[dlfind]"
+```
+
+### Install From Source
+
+```bash
+git clone https://github.com/alecbetancourt/JAX-ParamOpt.git
 cd JAX-ParamOpt
-```
-
-**2-** Create an environment:
-```
-conda create -n jax-env python
-conda activate jax-env
-```
-
-**3-** Install the package metadata and base dependencies:
-```
 pip install .
 ```
 
-**4-** Install the JAX backend dependencies required for the current optimizer code paths:
-```
+To include the current JAX runtime dependencies used by the optimizer code paths:
+
+```bash
 pip install ".[jax]"
 ```
 
-**5-** Optional dependency groups:
-```
-pip install ".[test]"        # pytest, coverage, test helpers
-pip install ".[lint]"        # ruff, pre-commit
-pip install ".[amber]"       # OpenMM / ParmEd support
-pip install ".[global-opt]"  # evosax-based global optimization
-pip install ".[dlfind]"      # DL-FIND integration
-```
+### Supported Install Modes
 
-After setup, JAX-ParamOpt can be accessed via the command line interface with `jaxparamopt`.
+- `pip install .` or `pip install jaxparamopt` installs the base package metadata and lightweight shared dependencies.
+- `pip install ".[jax]"` installs JAX, `jaxlib`, and the current `jax-md` fork dependency used by the optimizer.
+- `pip install ".[amber]"` adds OpenMM and ParmEd support.
+- `pip install ".[global-opt]"` adds `evosax`-based global optimization dependencies.
+- `pip install ".[dlfind]"` adds DL-FIND integration.
+- `pip install ".[test]"` installs the current local test toolchain.
+- `pip install ".[lint]"` installs `ruff` and `pre-commit`.
 
-#### Supported Install Modes
+## Environment Setup
 
-- `pip install .` installs the base package metadata and lightweight shared dependencies.
-- `pip install ".[jax]"` installs the JAX runtime dependencies required for the current optimizer code paths.
-- `pip install ".[amber]"`, `".[global-opt]"`, and `".[dlfind]"` add optional backend- or workflow-specific dependencies.
-- `pip install ".[test]"` and `pip install ".[lint]"` install the local development tooling used for tests and quality checks.
+The package is published and tested as a standard Python package, but the recommended environment manager depends on what you are trying to do.
 
-#### API Stability Note
+### Option 1: `uv` or `venv`
 
-The CLI entrypoint is currently the primary supported interface.
-The Python import surface is still provisional and may change as the backend and optimizer internals are refactored for the first public release.
+This is the closest match to the GitHub Actions runners.
 
-**6-** GPU support is still handled through the JAX installation you choose. One example is:
-```
-pip install -U "jax[cuda12]==0.4.30"
-```
+Using `uv`:
 
-To test the installation on a CPU (The JIT compilation time for CPUs drastically higher):
-```
-jaxparamopt --init_FF Datasets/cobalt/ffield_lit             \
-            --params Datasets/cobalt/params                  \
-            --geo Datasets/cobalt/geo                        \
-            --train_file Datasets/cobalt/trainset.in         \
-            --num_e_minim_steps 200                          \
-            --e_minim_LR 1e-3                                \
-            --out_folder ffields                             \
-            --save_opt all                                   \
-            --num_trials 1                                   \
-            --num_steps 20                                   \
-            --init_FF_type fixed                             
-```          
-You can learn more about JAX installation here: [JAX install guide](https://github.com/google/jax#installation)<br>
-
-After installing the GPU version, the script will automatically utilize the GPU. If the script does not detect the GPU, it will print a warning message.
-
-
-#### Using Validation Data
-```
-jaxparamopt --init_FF Datasets/disulfide/ffield_lit             \
-            --params Datasets/disulfide/params                  \
-            --geo Datasets/disulfide/geo                        \
-            --train_file Datasets/disulfide/trainset.in         \
-            --use_valid True                                    \
-            --valid_file Datasets/disulfide/valSet/trainset.in  \
-            --valid_geo_file Datasets/disulfide/valSet/geo      \
-            --num_e_minim_steps 200                             \
-            --e_minim_LR 1e-3                                   \
-            --out_folder ffields                                \
-            --save_opt all                                      \
-            --num_trials 1                                      \
-            --num_steps 20                                      \
-            --init_FF_type fixed                             
-``` 
-
-#### Additional Documentation
-
-*In Progress*
-
-#### Potential Issues
-
-On a HPC cluster, CUDA might be loaded somewhere different than /usr/local/cuda-xx.x. In this case, XLA compiler might not locate CUDA installation. This only happens if you install JAX with local CUDA support.
-To solve this, we can speficy the cuda directory using XLA_FLAGS:
-```
-# To see where cuda is installed
-which nvcc # will print /opt/software/CUDAcore/11.1.1/bin/nvcc
-export XLA_FLAGS="$XLA_FLAGS --xla_gpu_cuda_data_dir=/opt/software/CUDAcore/11.1.1"
+```bash
+uv python install 3.12
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install ".[test]"
+python -m pytest tests/config_test.py tests/driver_test.py
 ```
 
-Another potential issue related XLA compilation on clusters is *RuntimeError: Unknown: no kernel image is available for execution on the device* (potentially related to singularity)
-and it can be solved by changing XLA_FLAGS to:
+Using the standard library `venv`:
 
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install ".[test]"
+python -m pytest tests/config_test.py tests/driver_test.py
 ```
+
+### Option 2: `conda` or `mamba`
+
+This is a good choice if conda-exclusive downstream dependencies are required.
+
+```bash
+conda create -n jaxparamopt python=3.12
+conda activate jaxparamopt
+pip install .
+pip install ".[jax]"
+```
+
+If you need optional backends:
+
+```bash
+pip install ".[amber,global-opt,dlfind]"
+```
+
+On HPC clusters or other managed systems, prefer a user-created environment and unload unrelated Python or scientific software modules before installing or running the package. In particular, avoid inheriting a site-managed `PYTHONPATH` or system Python module into a `conda`, `venv`, or `uv` environment, as that can cause package-resolution and permission conflicts.
+
+### Option 3: install from a source archive or GitHub release artifact
+
+Once release artifacts exist:
+
+```bash
+pip install jaxparamopt-<version>-py3-none-any.whl
+```
+
+or
+
+```bash
+pip install jaxparamopt-<version>.tar.gz
+```
+
+## JAX and Accelerator Support
+
+JAX-ParamOpt relies on the JAX installation in your environment for CPU and accelerator support.
+
+- CPU-only and NVIDIA GPU installs should follow the official JAX installation guide.
+- GPU compatibility is intentionally handled downstream through `jax`/`jaxlib`, rather than through separate JAX-ParamOpt wheels.
+
+See the official JAX installation instructions here:
+
+- [JAX installation guide](https://docs.jax.dev/en/latest/installation.html)
+
+## Basic Usage
+
+After installation, the CLI entrypoint is available as:
+
+```bash
+jaxparamopt --help
+```
+
+A small ReaxFF-style example:
+
+```bash
+jaxparamopt --init_FF Datasets/cobalt/ffield_lit \
+            --params Datasets/cobalt/params \
+            --geo Datasets/cobalt/geo \
+            --train_file Datasets/cobalt/trainset.in \
+            --num_e_minim_steps 200 \
+            --e_minim_LR 1e-3 \
+            --out_folder ffields \
+            --save_opt all \
+            --num_trials 1 \
+            --num_steps 20 \
+            --init_FF_type fixed
+```
+
+Validation-data support exists in the argument surface but is not yet a stable, release-ready workflow.
+
+## Development
+
+The repository currently uses:
+
+- `pyproject.toml` for package metadata and tool configuration.
+- `pre-commit` plus `ruff` for lightweight quality checks.
+- GitHub Actions `ci.yml` for build smoke tests, linting, and the first interface tests.
+- GitHub Actions `release.yml` for source/wheel builds and future release publishing.
+
+Typical local commands:
+
+```bash
+python -m pip install ".[lint,test]"
+pre-commit run --all-files
+python -m pytest tests/config_test.py tests/driver_test.py
+```
+
+## Configuration Notes
+
+Several runtime behaviors are controlled outside the package itself through JAX/XLA configuration.
+
+- Precision:
+  The current driver enables `jax_enable_x64`, so double precision is expected by default in the current workflow.
+- GPU installation:
+  Follow the JAX installation guide for the correct CUDA-enabled `jaxlib` package rather than relying on package-local CUDA logic.
+- Nonstandard CUDA locations on clusters:
+  If XLA cannot find your CUDA installation, you may need:
+
+```bash
+export XLA_FLAGS="$XLA_FLAGS --xla_gpu_cuda_data_dir=/path/to/cuda"
+```
+
+- Certain cluster or container setups may require:
+
+```bash
 export XLA_FLAGS="$XLA_FLAGS --xla_gpu_force_compilation_parallelism=1"
 ```
-This flag can increase the compilation time drastically.
+
+  This can substantially increase compilation time.
+
+- Memory fraction:
+  The current driver sets `XLA_PYTHON_CLIENT_MEM_FRACTION=0.75` if it is not already defined in the environment.
+- Managed-system Python conflicts:
+  On HPC systems, starting from a clean shell can prevent conflicts with site-installed Python packages. Using `module purge` and unsetting `PYTHONPATH` before activating a user-managed environment is often helpful.
+
+## Citations
+
+If you use this repository, please cite the relevant upstream and project-specific work.
+
+- JAX-ParamOpt paper: in progress
+- Original JAX-ReaxFF paper: [JAX-ReaxFF](https://pubs.acs.org/doi/10.1021/acs.jctc.2c00363)
+- JAX-MD integration paper: [End-to-End Differentiable ReaxFF](https://link.springer.com/chapter/10.1007/978-3-031-32041-5_11)
+
+Additional dependency-specific citation guidance will be added as the first release is prepared.

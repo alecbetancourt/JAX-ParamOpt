@@ -47,8 +47,6 @@ jaxparamopt = "jaxparamopt.driver:main"
 
 [project.optional-dependencies]
 jax = [
-  "jax>=0.4.26,<0.5",
-  "jaxlib>=0.4.26,<0.5",
   "jax-md @ git+https://github.com/alecbetancourt/jax-md.git@amber#egg=jax_md",
 ]
 amber = [
