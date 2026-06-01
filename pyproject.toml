@@ -1,0 +1,128 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jaxparamopt"
+version = "0.1.0"
+description = "A JAX-based framework for molecular force field parameter optimization."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "William Betancourt", email = "alecbetancourt@gmail.com" },
+]
+keywords = ["jax", "molecular-dynamics", "simulation", "differentiable", "force field", "optimization", "chemistry"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  "frozendict",
+  "h5py",
+  "numpy<2.3.0",
+  "numba",
+  "optax",
+  "scipy",
+  "tabulate>=0.8.9",
+  "tqdm",
+]
+
+[project.urls]
+Homepage = "https://github.com/alecbetancourt/JAX-ParamOpt"
+Repository = "https://github.com/alecbetancourt/JAX-ParamOpt"
+Issues = "https://github.com/alecbetancourt/JAX-ParamOpt/issues"
+
+[project.scripts]
+jaxparamopt = "jaxparamopt.driver:main"
+
+[project.optional-dependencies]
+jax = [
+  "jax>=0.4.26,<0.5",
+  "jaxlib>=0.4.26,<0.5",
+  "jax-md @ git+https://github.com/alecbetancourt/jax-md.git@amber#egg=jax_md",
+]
+amber = [
+  "openmm",
+  "parmed",
+]
+global-opt = [
+  "evosax",
+]
+dlfind = [
+  "libdlfind",
+]
+test = [
+  "absl-py",
+  "coverage[toml]",
+  "pytest",
+  "pytest-cov",
+  "pytest-xdist",
+]
+lint = [
+  "pre-commit",
+  "ruff",
+]
+dev = [
+  "absl-py",
+  "coverage[toml]",
+  "pre-commit",
+  "pytest",
+  "pytest-cov",
+  "pytest-xdist",
+  "ruff",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["jaxparamopt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["*_test.py", "test_*.py"]
+addopts = [
+  "--strict-markers",
+  "--disable-warnings",
+]
+
+[tool.coverage.run]
+source = ["jaxparamopt"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "@abc.abstractmethod",
+  "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+  "Datasets",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "W",
+]
+ignore = [
+  "E741",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

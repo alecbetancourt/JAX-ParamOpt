@@ -47,29 +47,59 @@ Evosax
 etc.
 
 ## How to Install
-JAX-ParamOpt requires JAX and jaxlib ([Jax Repo](https://github.com/google/jax)). <br>
-The code is tested with JAX 0.4.26 - 0.4.30 and jaxlib 0.4.26 - 0.4.30.
-Since the optimizer is highly more performant on GPUs, GPU version of jaxlib needs to be installed (GPU version supports both CPU and GPU execution). <br>
+JAX-ParamOpt now uses `pyproject.toml` for package metadata and dependency groups.
+The core package metadata is intentionally lighter than the full scientific stack so
+that backend-specific dependencies can be installed explicitly.
 
-**1-** Before the installation, a supported version of CUDA and CuDNN are needed (for jaxlib). Alternatively, one could install the jax-md version that comes with required CUDA libraries. <br>
-
-**2-** Cloning the JAX-ParamOpt repo:
+**1-** Clone the repository:
 ```
 git clone https://github.com/alecbetancourt/JAX-ParamOpt/
 cd JAX-ParamOpt
 ```
 
-**3-** The installation can be done in a conda environment:
+**2-** Create an environment:
 ```
 conda create -n jax-env python
 conda activate jax-env
 ```
 
-**4-** JAX-ParamOpt is installed with the following command:
+**3-** Install the package metadata and base dependencies:
 ```
 pip install .
 ```
-After the setup, JAX-ParamOpt can be accessed via command line interface(CLI) with **jaxparamopt**
+
+**4-** Install the JAX backend dependencies required for the current optimizer code paths:
+```
+pip install ".[jax]"
+```
+
+**5-** Optional dependency groups:
+```
+pip install ".[test]"        # pytest, coverage, test helpers
+pip install ".[lint]"        # ruff, pre-commit
+pip install ".[amber]"       # OpenMM / ParmEd support
+pip install ".[global-opt]"  # evosax-based global optimization
+pip install ".[dlfind]"      # DL-FIND integration
+```
+
+After setup, JAX-ParamOpt can be accessed via the command line interface with `jaxparamopt`.
+
+#### Supported Install Modes
+
+- `pip install .` installs the base package metadata and lightweight shared dependencies.
+- `pip install ".[jax]"` installs the JAX runtime dependencies required for the current optimizer code paths.
+- `pip install ".[amber]"`, `".[global-opt]"`, and `".[dlfind]"` add optional backend- or workflow-specific dependencies.
+- `pip install ".[test]"` and `pip install ".[lint]"` install the local development tooling used for tests and quality checks.
+
+#### API Stability Note
+
+The CLI entrypoint is currently the primary supported interface.
+The Python import surface is still provisional and may change as the backend and optimizer internals are refactored for the first public release.
+
+**6-** GPU support is still handled through the JAX installation you choose. One example is:
+```
+pip install -U "jax[cuda12]==0.4.30"
+```
 
 To test the installation on a CPU (The JIT compilation time for CPUs drastically higher):
 ```
@@ -85,10 +115,6 @@ jaxparamopt --init_FF Datasets/cobalt/ffield_lit             \
             --num_steps 20                                   \
             --init_FF_type fixed                             
 ```          
-**5-** To have the GPU support, jaxlib with CUDA support needs to be installed, otherwise the code can only run on CPUs.
-```
-pip install -U "jax[cuda12]==0.4.30"
-```
 You can learn more about JAX installation here: [JAX install guide](https://github.com/google/jax#installation)<br>
 
 After installing the GPU version, the script will automatically utilize the GPU. If the script does not detect the GPU, it will print a warning message.
